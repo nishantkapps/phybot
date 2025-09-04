@@ -33,20 +33,26 @@ def get_joint_connections():
     return connections
 
 def plot_frame(vframes, xcoords, ycoords, zcoords, idx, connections, marker):
-    plt.scatter(xcoords[idx], ycoords[idx], c='red', marker='o', s=50)
-    # Plot bones
-    if marker != 'marker' :
-        for start_idx, end_idx in connections:
-            start_point = vframes[idx][start_idx]
-            end_point = vframes[idx][end_idx]
-            plt.plot([start_point[0], end_point[0]], [start_point[1], end_point[1]], 'b-')
-    plt.title('2D Body Pose Estimation')
-    plt.xlim(plt.xlim()[::-1])
-    plt.ylim(plt.ylim()[::-1])
-    plt.xlabel('X-coordinate')
-    plt.ylabel('Y-coordinate')
-    plt.grid(True)
-    plt.gca().set_aspect('equal', adjustable='box') # Maintain aspect ratio
+    plt.ion()
+    for i in range(vframes.shape[0]):
+        print(i)   
+        plt.clf()
+        plt.scatter(xcoords[idx], ycoords[idx], c='red', marker='o', s=50)
+        # Plot bones
+        if marker != 'marker' :
+            for start_idx, end_idx in connections:
+                start_point = vframes[idx][start_idx]
+                end_point = vframes[idx][end_idx]
+                plt.plot([start_point[0], end_point[0]], [start_point[1], end_point[1]], 'b-')
+        plt.title('2D Body Pose Estimation')
+        plt.xlim(plt.xlim()[::-1])
+        plt.ylim(plt.ylim()[::-1])
+        plt.xlabel('X-coordinate')
+        plt.ylabel('Y-coordinate')
+        plt.grid(True)
+        plt.gca().set_aspect('equal', adjustable='box') # Maintain aspect ratio
+        plt.pause(0.001)  # Pause to create animation effect
+    plt.ioff()
     plt.show()
 
 def load_video_frames(directory_path):
