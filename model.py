@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 from transformers import ViTModel, ViTConfig
+from torchinfo import summary
 
 class PoseTransformerLSTM(nn.Module):
 
@@ -33,7 +34,7 @@ if __name__ == '__main__':
     
     # Create the model
     model = PoseTransformerLSTM(num_joints=NUM_JOINTS, num_classes=NUM_CLASSES)
-    
+    summary(model, input_size=(BATCH_SIZE, SEQUENCE_LENGTH, NUM_JOINTS, 2))
     # Get model output
     output = model(dummy_input)
     

@@ -21,24 +21,6 @@ def get_xycoords_for_plotting(vframe, number_of_markers_or_joints, _3d):
             zcoords.append(zcol)
     return xcoords, ycoords, zcoords
 
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
 def get_joint_connections():
     connections = [
         (0, 16), (0, 21), (0, 1),  # Hips to legs
