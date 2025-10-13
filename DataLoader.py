@@ -21,6 +21,24 @@ def get_xycoords_for_plotting(vframe, number_of_markers_or_joints, _3d):
             zcoords.append(zcol)
     return xcoords, ycoords, zcoords
 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 def get_joint_connections():
     connections = [
         (0, 16), (0, 21), (0, 1),  # Hips to legs
@@ -34,7 +52,8 @@ def get_joint_connections():
 
 def plot_frame(vframes, xcoords, ycoords, zcoords, idx, connections, marker):
     plt.ion()
-    for i in range(vframes.shape[0]):
+    print(vframes.shape[0])
+    for i in range(0,vframes.shape[0],1000):
         print(i)   
         plt.clf()
         plt.scatter(xcoords[idx], ycoords[idx], c='red', marker='o', s=50)
@@ -51,7 +70,7 @@ def plot_frame(vframes, xcoords, ycoords, zcoords, idx, connections, marker):
         plt.ylabel('Y-coordinate')
         plt.grid(True)
         plt.gca().set_aspect('equal', adjustable='box') # Maintain aspect ratio
-        plt.pause(0.001)  # Pause to create animation effect
+        plt.pause(0.5)  # Pause to create animation effect
     plt.ioff()
     plt.show()
 
@@ -104,10 +123,12 @@ def main():
     ex5_mkr3d_vframes, ex5_mkr3d_ffiles = load_video_frames('3d_markers/Ex5')
     ex6_mkr3d_vframes, ex6_mkr3d_ffiles = load_video_frames('3d_markers/Ex6')
 
-    vframe = ex1_vframes[20]
-    xcoords, ycoords, zcoords = get_xycoords_for_plotting(vframe, 26, '2d')
-    connections = get_joint_connections()
-    plot_frame(vframe, xcoords, ycoords, zcoords, 1, connections, 'joint')
+    for j in range(0, len(ex1_vframes),50):
+        vframe = ex1_vframes[j]
+        xcoords, ycoords, zcoords = get_xycoords_for_plotting(vframe, 26, '2d')
+        connections = get_joint_connections()
+        for idx in range(0, vframe.shape[0], 10):
+            plot_frame(vframe, xcoords, ycoords, zcoords, idx, connections, 'joint')
 
 if __name__ == "__main__":
     main()

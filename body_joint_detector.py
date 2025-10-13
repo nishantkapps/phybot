@@ -83,7 +83,7 @@ if __name__ == '__main__':
         cv2.destroyAllWindows()
 
     #if face_frames:
-        # Display the first frame with face landmarks (for example)
-    #    cv2.imshow('Face Mesh Estimation', face_frames[0])
-     #   cv2.waitKey(0)
-    #    cv2.destroyAllWindows()
+    #   Display the first frame with face landmarks (for example)
+    #   cv2.imshow('Face Mesh Estimation', face_frames[0])
+    #   cv2.waitKey(0)
+    #   cv2.destroyAllWindows()
