@@ -3,6 +3,8 @@ import matplotlib.pyplot as plt
 import os
 import time
 import argparse
+import json
+from pathlib import Path
 from typing import (
     Callable,
     List,
@@ -96,6 +98,27 @@ class DOFSmootherEMA:
         return self.state
 
 # ============================================================
+# 📏 Units & ROM helpers
+# ============================================================
+def inches_to_meters(x: float) -> float:
+    """Convert inches to meters."""
+    return float(x) * 0.0254
+
+
+def _get_rom_side(rom_cfg: dict, key: str, side: str, default_min: float = 0.0, default_max: float = 150.0, default_neutral: float = 0.0) -> Tuple[float, float, float]:
+    """Return (min,max,neutral) for a given ROM key and side, supporting two schema styles:
+    1) Single dict: {min,max,neutral}
+    2) Per-side dict: {L:{...}, R:{...}}
+    """
+    node = rom_cfg.get(key, {})
+    if "L" in node or "R" in node:
+        node = node.get(side, {})
+    mn = float(node.get("min", default_min))
+    mx = float(node.get("max", default_max))
+    nt = float(node.get("neutral", default_neutral))
+    return mn, mx, nt
+
+# ============================================================
 # 🦾 Shoulder Angles (3D)
 # Summary: Compute shoulder flexion and abduction using torso frame.
 # ============================================================
@@ -149,6 +172,193 @@ def compute_shoulder_angles_3d(
         abduction = float(np.degrees(abduction))
     return flexion, abduction
 
+# ============================================================
+# 🎛️ Shoulder DOF Mapper (3D sequence)
+# Summary: Map each 3D frame to L/R flexion & abduction DOFs, normalized & smoothed.
+# ============================================================
+def map_shoulders_to_dofs_3d_sequence(
+    pose_seq: np.ndarray,
+    l_sh_idx: int,
+    l_el_idx: int,
+    r_sh_idx: int,
+    r_el_idx: int,
+    flex_rom_min_deg: float = 0.0,
+    flex_rom_max_deg: float = 150.0,
+    abd_rom_min_deg: float = 0.0,
+    abd_rom_max_deg: float = 150.0,
+    l_flex_neutral_deg: float = 0.0,
+    r_flex_neutral_deg: float = 0.0,
+    l_abd_neutral_deg: float = 0.0,
+    r_abd_neutral_deg: float = 0.0,
+    smoothing_alpha: float = 0.3,
+) -> np.ndarray:
+    """Return [frames, 4] array: [L_flex, R_flex, L_abd, R_abd] in [0,1]."""
+    if pose_seq.ndim < 2:
+        raise ValueError("pose_seq must be at least [frames, ...]")
+
+    num_frames = pose_seq.shape[0]
+    dofs = np.zeros((num_frames, 4), dtype=float)
+
+    # Normalizers & smoothers per DOF
+    l_flex_norm = DOFNormalizer(flex_rom_min_deg, flex_rom_max_deg, neutral_deg=l_flex_neutral_deg)
+    r_flex_norm = DOFNormalizer(flex_rom_min_deg, flex_rom_max_deg, neutral_deg=r_flex_neutral_deg)
+    l_abd_norm = DOFNormalizer(abd_rom_min_deg, abd_rom_max_deg, neutral_deg=l_abd_neutral_deg)
+    r_abd_norm = DOFNormalizer(abd_rom_min_deg, abd_rom_max_deg, neutral_deg=r_abd_neutral_deg)
+    l_flex_sm = DOFSmootherEMA(alpha=smoothing_alpha)
+    r_flex_sm = DOFSmootherEMA(alpha=smoothing_alpha)
+    l_abd_sm = DOFSmootherEMA(alpha=smoothing_alpha)
+    r_abd_sm = DOFSmootherEMA(alpha=smoothing_alpha)
+
+    def _to_pts(arr: np.ndarray) -> np.ndarray:
+        if arr.ndim == 2:
+            if arr.shape[1] >= 3:
+                return arr[:, :3]
+            if arr.shape[0] >= 3:
+                return arr[:3, :].T
+            flat = arr.ravel()
+        else:
+            flat = arr.ravel()
+        if flat.size % 3 == 0:
+            return flat.reshape(-1, 3)
+        if flat.size % 4 == 0:
+            return flat.reshape(-1, 4)[:, :3]
+        raise ValueError("cannot coerce frame to [N,3]")
+
+    for t in range(num_frames):
+        try:
+            pts = _to_pts(pose_seq[t])
+            # Torso anchors (defaults per joints_names.txt): 0 Hips, 3 Neck, 16 L Hip, 21 R Hip
+            pelvis = pts[0] if pts.shape[0] > 0 else None
+            neck = pts[3] if pts.shape[0] > 3 else None
+            l_hip = pts[16] if pts.shape[0] > 16 else None
+            r_hip = pts[21] if pts.shape[0] > 21 else None
+            if pelvis is None or neck is None or l_hip is None or r_hip is None:
+                # carry previous values if torso not available
+                if t > 0:
+                    dofs[t] = dofs[t - 1]
+                continue
+            origin, right, up, forward = build_torso_frame_3d(pelvis, neck, l_hip, r_hip)
+
+            # Joints for shoulders and elbows (CLI-provided indices)
+            if max(l_sh_idx, l_el_idx, r_sh_idx, r_el_idx) >= pts.shape[0]:
+                if t > 0:
+                    dofs[t] = dofs[t - 1]
+                continue
+            l_sh = pts[l_sh_idx]
+            l_el = pts[l_el_idx]
+            r_sh = pts[r_sh_idx]
+            r_el = pts[r_el_idx]
+
+            l_fx_deg, l_ab_deg = compute_shoulder_angles_3d(
+                l_sh, l_el, origin, right, up, forward, in_degrees=True
+            )
+            r_fx_deg, r_ab_deg = compute_shoulder_angles_3d(
+                r_sh, r_el, origin, right, up, forward, in_degrees=True
+            )
+
+            # Normalize and smooth to [0,1]
+            dofs[t, 0] = l_flex_sm.step(l_flex_norm.normalize(l_fx_deg))
+            dofs[t, 1] = r_flex_sm.step(r_flex_norm.normalize(r_fx_deg))
+            dofs[t, 2] = l_abd_sm.step(l_abd_norm.normalize(l_ab_deg))
+            dofs[t, 3] = r_abd_sm.step(r_abd_norm.normalize(r_ab_deg))
+        except Exception:
+            if t > 0:
+                dofs[t] = dofs[t - 1]
+            continue
+
+    return dofs
+
+# ============================================================
+# 🎛️ Shoulder DOF Mapper (2D sequence)
+# Summary: Map each 2D frame to L/R flexion & abduction DOFs using shoulder-width normalization.
+# ============================================================
+def map_shoulders_to_dofs_2d_sequence(
+    pose_seq: np.ndarray,
+    l_sh_idx: int,
+    l_el_idx: int,
+    r_sh_idx: int,
+    r_el_idx: int,
+    shoulder_width_in: float = 15.0,
+    pixels_per_meter_hint: float | None = None,
+    flex_rom_min_deg: float = 0.0,
+    flex_rom_max_deg: float = 150.0,
+    abd_rom_min_deg: float = 0.0,
+    abd_rom_max_deg: float = 150.0,
+    l_flex_neutral_deg: float = 0.0,
+    r_flex_neutral_deg: float = 0.0,
+    l_abd_neutral_deg: float = 0.0,
+    r_abd_neutral_deg: float = 0.0,
+    smoothing_alpha: float = 0.3,
+) -> np.ndarray:
+    """Return [frames, 4] array: [L_flex, R_flex, L_abd, R_abd] in [0,1] from 2D joints.
+
+    Heuristics:
+    - Flexion proxy: vertical displacement of elbow above shoulder (pixels) normalized by shoulder width.
+    - Abduction proxy: lateral displacement of elbow from the shoulder line normalized by shoulder width.
+    """
+    if pose_seq.ndim < 2:
+        raise ValueError("pose_seq must be at least [frames, ...]")
+
+    num_frames = pose_seq.shape[0]
+    dofs = np.zeros((num_frames, 4), dtype=float)
+
+    l_flex_norm = DOFNormalizer(flex_rom_min_deg, flex_rom_max_deg, neutral_deg=l_flex_neutral_deg)
+    r_flex_norm = DOFNormalizer(flex_rom_min_deg, flex_rom_max_deg, neutral_deg=r_flex_neutral_deg)
+    l_abd_norm = DOFNormalizer(abd_rom_min_deg, abd_rom_max_deg, neutral_deg=l_abd_neutral_deg)
+    r_abd_norm = DOFNormalizer(abd_rom_min_deg, abd_rom_max_deg, neutral_deg=r_abd_neutral_deg)
+    l_flex_sm = DOFSmootherEMA(alpha=smoothing_alpha)
+    r_flex_sm = DOFSmootherEMA(alpha=smoothing_alpha)
+    l_abd_sm = DOFSmootherEMA(alpha=smoothing_alpha)
+    r_abd_sm = DOFSmootherEMA(alpha=smoothing_alpha)
+
+    def _to_2d(arr: np.ndarray) -> np.ndarray:
+        if arr.ndim == 2 and arr.shape[1] >= 2:
+            return arr[:, :2]
+        if arr.ndim == 2 and arr.shape[0] >= 2:
+            return arr[:2, :].T
+        flat = arr.ravel()
+        if flat.size % 2 == 0:
+            return flat.reshape(-1, 2)
+        if flat.size % 3 == 0:
+            return flat.reshape(-1, 3)[:, :2]
+        raise ValueError("cannot coerce frame to [N,2]")
+
+    shoulder_width_m = inches_to_meters(shoulder_width_in)
+    for t in range(num_frames):
+        try:
+            pts2 = _to_2d(pose_seq[t])
+            if max(l_sh_idx, l_el_idx, r_sh_idx, r_el_idx) >= pts2.shape[0]:
+                if t > 0:
+                    dofs[t] = dofs[t - 1]
+                continue
+            # Pixel shoulder width estimate per frame
+            if pts2.shape[0] > max(6, 11):
+                sh_w_px = float(np.linalg.norm(pts2[11] - pts2[6]))
+            else:
+                sh_w_px = 1.0
+            if sh_w_px <= 1e-6:
+                if t > 0:
+                    dofs[t] = dofs[t - 1]
+                continue
+
+            # Vertical up is decreasing y in most image coords; use absolute displacement magnitude
+            l_sh, l_el = pts2[l_sh_idx], pts2[l_el_idx]
+            r_sh, r_el = pts2[r_sh_idx], pts2[r_el_idx]
+            l_flex_proxy_deg = float(np.degrees(np.arctan2(abs(l_sh[1] - l_el[1]), sh_w_px))) * 180.0 / 90.0
+            r_flex_proxy_deg = float(np.degrees(np.arctan2(abs(r_sh[1] - r_el[1]), sh_w_px))) * 180.0 / 90.0
+            l_abd_proxy_deg = float(np.degrees(np.arctan2(abs(l_sh[0] - l_el[0]), sh_w_px))) * 180.0 / 90.0
+            r_abd_proxy_deg = float(np.degrees(np.arctan2(abs(r_sh[0] - r_el[0]), sh_w_px))) * 180.0 / 90.0
+
+            dofs[t, 0] = l_flex_sm.step(l_flex_norm.normalize(l_flex_proxy_deg))
+            dofs[t, 1] = r_flex_sm.step(r_flex_norm.normalize(r_flex_proxy_deg))
+            dofs[t, 2] = l_abd_sm.step(l_abd_norm.normalize(l_abd_proxy_deg))
+            dofs[t, 3] = r_abd_sm.step(r_abd_norm.normalize(r_abd_proxy_deg))
+        except Exception:
+            if t > 0:
+                dofs[t] = dofs[t - 1]
+            continue
+
+    return dofs
 # ============================================================
 # 🧠 PID Controller
 # Summary: Provides a vectorized PID controller to compute control
@@ -499,6 +709,12 @@ def main():
         help="Visualization frame interval in ms",
     )
     parser.add_argument(
+        "--config",
+        type=str,
+        default=None,
+        help="Path to JSON config for joints/ROM/smoothing (default: physio_config.json)",
+    )
+    parser.add_argument(
         "--debug_angles",
         action="store_true",
         help="Print sample 3D shoulder flexion/abduction angles",
@@ -508,9 +724,83 @@ def main():
         action="store_true",
         help="Demo per-user DOF normalization and smoothing for shoulders",
     )
+    parser.add_argument(
+        "--use_shoulder_mapper",
+        action="store_true",
+        help="Use 3D shoulder mapper as robot inputs (overrides default mapping)",
+    )
+    parser.add_argument(
+        "--l_sh_idx",
+        type=int,
+        default=6,
+        help="Index of LeftShoulder joint in pose array",
+    )
+    parser.add_argument(
+        "--l_el_idx",
+        type=int,
+        default=8,
+        help="Index of Left elbow proxy (e.g., LeftForeArm) in pose array",
+    )
+    parser.add_argument(
+        "--r_sh_idx",
+        type=int,
+        default=11,
+        help="Index of RightShoulder joint in pose array",
+    )
+    parser.add_argument(
+        "--r_el_idx",
+        type=int,
+        default=13,
+        help="Index of Right elbow proxy (e.g., RightForeArm) in pose array",
+    )
     args = parser.parse_args()
 
     print("\n=== Physiotherapy Robot Simulation using Real Pose Data ===")
+
+    # Load configuration (optional) and override relevant args
+    def load_config(path: str | None) -> dict:
+        candidates = []
+        if path:
+            candidates.append(Path(path))
+        candidates.append(Path("physio_config.json"))
+        for p in candidates:
+            if p.is_file():
+                try:
+                    with p.open("r", encoding="utf-8") as f:
+                        cfg = json.load(f)
+                        print(f"Using config: {p}")
+                        return cfg
+                except Exception as e:
+                    print(f"[warn] failed to read config {p}: {e}")
+        return {}
+
+    cfg = load_config(args.config)
+    # Override joint indices if present
+    joints_cfg = cfg.get("joints", {})
+    args.l_sh_idx = int(joints_cfg.get("l_sh_idx", args.l_sh_idx))
+    args.l_el_idx = int(joints_cfg.get("l_el_idx", args.l_el_idx))
+    args.r_sh_idx = int(joints_cfg.get("r_sh_idx", args.r_sh_idx))
+    args.r_el_idx = int(joints_cfg.get("r_el_idx", args.r_el_idx))
+    # ROM and smoothing for demo path (supports per-side or shared configs)
+    rom_cfg = cfg.get("rom_deg", {})
+    # Simple, relatable measurements (e.g., inches) under anthropometrics
+    anthro = cfg.get("anthropometrics", {})
+    shoulder_width_in = float(anthro.get("shoulder_width_in", 15.0))
+    shoulder_width_m = inches_to_meters(shoulder_width_in)
+    smoothing_alpha = float(cfg.get("smoothing", {}).get("alpha", 0.3))
+
+    # Per-side ROM and neutrals
+    l_fx_min, l_fx_max, l_fx_neu = _get_rom_side(rom_cfg, "shoulder_flexion", "L")
+    r_fx_min, r_fx_max, r_fx_neu = _get_rom_side(rom_cfg, "shoulder_flexion", "R")
+    l_ab_min, l_ab_max, l_ab_neu = _get_rom_side(rom_cfg, "shoulder_abduction", "L")
+    r_ab_min, r_ab_max, r_ab_neu = _get_rom_side(rom_cfg, "shoulder_abduction", "R")
+    # Input mapping behavior (default: always use shoulder mapper in 3D)
+    use_shoulder_mapper = bool(cfg.get("inputs", {}).get("use_shoulder_mapper", True))
+    # Debug/prints behavior (default ON while coding)
+    dbg_cfg = cfg.get("debug", {})
+    debug_print_torso = bool(dbg_cfg.get("print_torso", True))
+    debug_print_angles = bool(dbg_cfg.get("print_angles", True)) or args.debug_angles
+    debug_demo_user_dof = bool(dbg_cfg.get("print_dof_demo", True)) or args.demo_user_dof
 
     pose_seq = load_pose_sequence(args.data_dir, args.idx, args.example, args.mode)
 
@@ -527,13 +817,14 @@ def main():
                 pelvis, neck, left_hip, right_hip
             )
             # Minimal diagnostic output to verify
-            print("Torso frame:",
-                  "origin=", origin,
-                  "| right=", np.round(right, 3),
-                  "| up=", np.round(up, 3),
-                  "| fwd=", np.round(forward, 3))
+            if debug_print_torso:
+                print("Torso frame:",
+                      "origin=", origin,
+                      "| right=", np.round(right, 3),
+                      "| up=", np.round(up, 3),
+                      "| fwd=", np.round(forward, 3))
 
-            if args.debug_angles:
+            if debug_print_angles:
                 # Coerce sample to [num_joints, 3] for robust indexing
                 def _to_pts(arr: np.ndarray) -> np.ndarray:
                     if arr.ndim == 2:
@@ -551,9 +842,9 @@ def main():
                     raise ValueError("cannot coerce sample to [N,3]")
 
                 pts = _to_pts(sample)
-                # Joint indices from joints_names.txt
-                idx_l_sh, idx_l_el = 6, 7    # LeftShoulder, LeftArm (elbow proxy)
-                idx_r_sh, idx_r_el = 11, 12  # RightShoulder, RightArm (elbow proxy)
+                # Joint indices (CLI-overridable)
+                idx_l_sh, idx_l_el = args.l_sh_idx, args.l_el_idx
+                idx_r_sh, idx_r_el = args.r_sh_idx, args.r_el_idx
                 if max(idx_l_sh, idx_l_el, idx_r_sh, idx_r_el) < pts.shape[0]:
                     l_sh = pts[idx_l_sh]
                     l_el = pts[idx_l_el]
@@ -573,23 +864,23 @@ def main():
                 else:
                     print("[warn] debug_angles skipped: joint indices exceed array shape", pts.shape)
 
-            if args.demo_user_dof:
+            if debug_demo_user_dof:
                 # Simple demonstration of per-user normalization and smoothing
-                # Therapist-provided ROM (example values):
-                l_flex_norm = DOFNormalizer(min_angle_deg=0, max_angle_deg=150, neutral_deg=0)
-                l_abd_norm = DOFNormalizer(min_angle_deg=0, max_angle_deg=150, neutral_deg=0)
-                r_flex_norm = DOFNormalizer(min_angle_deg=0, max_angle_deg=150, neutral_deg=0)
-                r_abd_norm = DOFNormalizer(min_angle_deg=0, max_angle_deg=150, neutral_deg=0)
-                l_flex_sm = DOFSmootherEMA(alpha=0.3)
-                l_abd_sm = DOFSmootherEMA(alpha=0.3)
-                r_flex_sm = DOFSmootherEMA(alpha=0.3)
-                r_abd_sm = DOFSmootherEMA(alpha=0.3)
+                # Therapist-provided ROM and smoothing from config (per-side aware)
+                l_flex_norm = DOFNormalizer(min_angle_deg=l_fx_min, max_angle_deg=l_fx_max, neutral_deg=l_fx_neu)
+                r_flex_norm = DOFNormalizer(min_angle_deg=r_fx_min, max_angle_deg=r_fx_max, neutral_deg=r_fx_neu)
+                l_abd_norm = DOFNormalizer(min_angle_deg=l_ab_min, max_angle_deg=l_ab_max, neutral_deg=l_ab_neu)
+                r_abd_norm = DOFNormalizer(min_angle_deg=r_ab_min, max_angle_deg=r_ab_max, neutral_deg=r_ab_neu)
+                l_flex_sm = DOFSmootherEMA(alpha=smoothing_alpha)
+                l_abd_sm = DOFSmootherEMA(alpha=smoothing_alpha)
+                r_flex_sm = DOFSmootherEMA(alpha=smoothing_alpha)
+                r_abd_sm = DOFSmootherEMA(alpha=smoothing_alpha)
 
                 # Use the same first frame sample for a quick demo
                 pts = _to_pts(sample)
-                if max(6, 7, 11, 12) < pts.shape[0]:
-                    l_sh, l_el = pts[6], pts[7]
-                    r_sh, r_el = pts[11], pts[12]
+                if max(args.l_sh_idx, args.l_el_idx, args.r_sh_idx, args.r_el_idx) < pts.shape[0]:
+                    l_sh, l_el = pts[args.l_sh_idx], pts[args.l_el_idx]
+                    r_sh, r_el = pts[args.r_sh_idx], pts[args.r_el_idx]
                     l_fx, l_ab = compute_shoulder_angles_3d(l_sh, l_el, origin, right, up, forward, in_degrees=True)
                     r_fx, r_ab = compute_shoulder_angles_3d(r_sh, r_el, origin, right, up, forward, in_degrees=True)
                     # Normalize and smooth
@@ -608,6 +899,59 @@ def main():
             print("[warn] torso frame build skipped:", e)
             
     robot_inputs = convert_pose_to_robot_inputs(pose_seq, args.dof)
+    if args.mode == "3d" and use_shoulder_mapper:
+        try:
+            dof_seq = map_shoulders_to_dofs_3d_sequence(
+                pose_seq,
+                l_sh_idx=args.l_sh_idx,
+                l_el_idx=args.l_el_idx,
+                r_sh_idx=args.r_sh_idx,
+                r_el_idx=args.r_el_idx,
+                flex_rom_min_deg=min(l_fx_min, r_fx_min),
+                flex_rom_max_deg=max(l_fx_max, r_fx_max),
+                abd_rom_min_deg=min(l_ab_min, r_ab_min),
+                abd_rom_max_deg=max(l_ab_max, r_ab_max),
+                l_flex_neutral_deg=l_fx_neu,
+                r_flex_neutral_deg=r_fx_neu,
+                l_abd_neutral_deg=l_ab_neu,
+                r_abd_neutral_deg=r_ab_neu,
+                smoothing_alpha=smoothing_alpha,
+            )
+            if args.dof <= 4:
+                robot_inputs = dof_seq[:, :args.dof]
+            else:
+                pad = np.zeros((dof_seq.shape[0], args.dof - 4), dtype=float)
+                robot_inputs = np.concatenate([dof_seq, pad], axis=1)
+            print("Using 3D shoulder mapper for robot inputs.")
+        except Exception as e:
+            print("[warn] shoulder mapper failed, using default inputs:", e)
+    elif args.mode == "2d" and use_shoulder_mapper:
+        try:
+            dof_seq = map_shoulders_to_dofs_2d_sequence(
+                pose_seq,
+                l_sh_idx=args.l_sh_idx,
+                l_el_idx=args.l_el_idx,
+                r_sh_idx=args.r_sh_idx,
+                r_el_idx=args.r_el_idx,
+                shoulder_width_in=shoulder_width_in,
+                flex_rom_min_deg=min(l_fx_min, r_fx_min),
+                flex_rom_max_deg=max(l_fx_max, r_fx_max),
+                abd_rom_min_deg=min(l_ab_min, r_ab_min),
+                abd_rom_max_deg=max(l_ab_max, r_ab_max),
+                l_flex_neutral_deg=l_fx_neu,
+                r_flex_neutral_deg=r_fx_neu,
+                l_abd_neutral_deg=l_ab_neu,
+                r_abd_neutral_deg=r_ab_neu,
+                smoothing_alpha=smoothing_alpha,
+            )
+            if args.dof <= 4:
+                robot_inputs = dof_seq[:, :args.dof]
+            else:
+                pad = np.zeros((dof_seq.shape[0], args.dof - 4), dtype=float)
+                robot_inputs = np.concatenate([dof_seq, pad], axis=1)
+            print("Using 2D shoulder mapper for robot inputs.")
+        except Exception as e:
+            print("[warn] 2D shoulder mapper failed, using default inputs:", e)
 
     control_fn = (
         make_pid_control(dof=args.dof, timestep=args.timestep)
