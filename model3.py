@@ -156,66 +156,6 @@ def visualize_pose_and_robot(pose_seq, robot_history, mode="2d", interval=50):
     plt.ioff()
     plt.show()
 
-def visualize_pose_and_robot(pose_seq, robot_history, mode="2d", interval=50):
-    """
-    Visualize human pose (2D or 3D) and robot motion side-by-side.
-    
-    pose_seq: np.array
-        - 2D: (num_frames, num_joints, 2)
-        - 3D: (num_frames, num_joints, 3)
-    robot_history: list of tuples (time, joint_angles)
-    mode: "2d" or "3d"
-    interval: int
-        Pause between frames in milliseconds
-    """
-    num_frames = min(len(robot_history), len(pose_seq))
-    num_joints = pose_seq.shape[1]
-
-    plt.ion()
-    fig = plt.figure(figsize=(12, 6))
-    
-    if mode == "3d":
-        ax_pose = fig.add_subplot(1, 2, 1, projection='3d')
-    else:
-        ax_pose = fig.add_subplot(1, 2, 1)
-    
-    ax_robot = fig.add_subplot(1, 2, 2)
-    
-    # Precompute limits for pose axes
-    x_vals = pose_seq[:,:,0].flatten()
-    y_vals = pose_seq[:,:,1].flatten()
-    if mode == "3d":
-        z_vals = pose_seq[:,:,2].flatten()
-    
-    for t in range(num_frames):
-        # --- Plot human pose ---
-        ax_pose.cla()
-        if mode == "3d":
-            ax_pose.scatter(pose_seq[t,:,0], pose_seq[t,:,1], pose_seq[t,:,2], c='r', s=50)
-            ax_pose.set_xlim(np.min(x_vals)-0.1, np.max(x_vals)+0.1)
-            ax_pose.set_ylim(np.min(y_vals)-0.1, np.max(y_vals)+0.1)
-            ax_pose.set_zlim(np.min(z_vals)-0.1, np.max(z_vals)+0.1)
-            ax_pose.set_xlabel('X'); ax_pose.set_ylabel('Y'); ax_pose.set_zlabel('Z')
-        else:
-            ax_pose.scatter(pose_seq[t,:,0], pose_seq[t,:,1], c='r', s=50)
-            ax_pose.set_xlim(np.min(x_vals)-0.1, np.max(x_vals)+0.1)
-            ax_pose.set_ylim(np.min(y_vals)-0.1, np.max(y_vals)+0.1)
-            ax_pose.invert_yaxis()  # optional, for image-like coordinates
-        ax_pose.set_title("Human Pose")
-        
-        # --- Plot robot ---
-        ax_robot.cla()
-        joint_angles = robot_history[t][1]  # assuming robot_history = list of (time, angles)
-        ax_robot.plot(range(len(joint_angles)), joint_angles, 'b.-')
-        ax_robot.set_ylim(0, np.max(joint_angles)*1.1)
-        ax_robot.set_title("Robot DOF")
-        ax_robot.set_xlabel("Joint Index")
-        ax_robot.set_ylabel("Angle / Actuator Value")
-        
-        plt.pause(interval/1000)
-    
-    plt.ioff()
-    plt.show()
 # ============================================================
 # 🧩 Main Integrated Entry Point
 # ============================================================
