@@ -12,7 +12,8 @@ from model3 import (
     map_shoulders_to_dofs_3d_sequence,
     map_shoulders_to_dofs_2d_sequence,
     load_pose_sequence,
-    get_joint_connections
+    get_joint_connections,
+    inches_to_meters
 )
 
 def visualize_shoulder_mapping(mode="3d", example="Ex1", idx=0, config_file="test_config.json", 
@@ -87,101 +88,195 @@ def visualize_shoulder_mapping(mode="3d", example="Ex1", idx=0, config_file="tes
     connections = get_joint_connections()
     num_frames = min(len(dofs), pose_seq.shape[0])
     
-    fig = plt.figure(figsize=(15, 8))
-    
+    fig = plt.figure(figsize=(18, 10))
+    from matplotlib.gridspec import GridSpec
+    gs = GridSpec(2, 4, figure=fig, height_ratios=[2.0, 1.0], wspace=0.25, hspace=0.35)
+
+    # Top row (full width split into two halves): original and adjusted poses
     if mode == "3d":
-        ax_pose = fig.add_subplot(1, 3, 1, projection='3d')
+        ax_pose_orig = fig.add_subplot(gs[0, 0:2], projection='3d')
+        ax_pose_adj = fig.add_subplot(gs[0, 2:4], projection='3d')
     else:
-        ax_pose = fig.add_subplot(1, 3, 1)
+        ax_pose_orig = fig.add_subplot(gs[0, 0:2])
+        ax_pose_adj = fig.add_subplot(gs[0, 2:4])
+
+    # Bottom row: four compact charts (L_Flex, R_Flex, L_Abd, R_Abd)
+    ax_l_flex = fig.add_subplot(gs[1, 0])
+    ax_r_flex = fig.add_subplot(gs[1, 1])
+    ax_l_abd = fig.add_subplot(gs[1, 2])
+    ax_r_abd = fig.add_subplot(gs[1, 3])
     
-    # DOF charts
-    ax_l_flex = fig.add_subplot(3, 3, 2)
-    ax_r_flex = fig.add_subplot(3, 3, 3)
-    ax_l_abd = fig.add_subplot(3, 3, 5)
-    ax_r_abd = fig.add_subplot(3, 3, 6)
-    ax_time = fig.add_subplot(3, 3, 8)
-    
-    # Time series of all DOFs
-    time_axis = np.arange(num_frames)
-    ax_time.plot(time_axis, dofs[:, 0], 'b-', label='L_flex', linewidth=2)
-    ax_time.plot(time_axis, dofs[:, 1], 'r-', label='R_flex', linewidth=2)
-    ax_time.plot(time_axis, dofs[:, 2], 'b--', label='L_abd', linewidth=2)
-    ax_time.plot(time_axis, dofs[:, 3], 'r--', label='R_abd', linewidth=2)
-    ax_time.set_xlabel('Frame')
-    ax_time.set_ylabel('DOF Value')
-    ax_time.set_title('DOF Time Series')
-    ax_time.legend()
-    ax_time.grid(True, alpha=0.3)
-    ax_time.set_ylim(0, 1)
+    # (Time series removed for compact 2x4 layout)
     
     # Animation loop
+    def _to2d(arr):
+        if arr.ndim == 2 and arr.shape[1] >= 2:
+            return arr[:, :2]
+        if arr.ndim == 2 and arr.shape[0] >= 2:
+            return arr[:2, :].T
+        flat = arr.ravel()
+        if flat.size % 2 == 0:
+            return flat.reshape(-1, 2)
+        if flat.size % 3 == 0:
+            return flat.reshape(-1, 3)[:, :2]
+        return None
+
+    def _to3d(arr):
+        if arr.ndim == 2 and arr.shape[1] >= 3:
+            return arr[:, :3]
+        if arr.ndim == 2 and arr.shape[0] >= 3:
+            return arr[:3, :].T
+        flat = arr.ravel()
+        if flat.size % 3 == 0:
+            return flat.reshape(-1, 3)
+        if flat.size % 4 == 0:
+            return flat.reshape(-1, 4)[:, :3]
+        return None
+
+    def adjust_pose_by_shoulder_width(frame_arr, mode, shoulder_width_in):
+        # Return adjusted joints array with scaling so shoulder width matches provided inches
+        if mode == "2d":
+            pts = _to2d(frame_arr)
+            if pts is None or max(7, 12) >= pts.shape[0]:
+                return None
+            # Use LeftArm (7) to RightArm (12) span as user-requested shoulder span
+            l_sh, r_sh = pts[7], pts[12]
+            mid = (l_sh + r_sh) / 2.0
+            current = np.linalg.norm(r_sh - l_sh)
+            if current <= 1e-6:
+                return None
+            target_px = shoulder_width_in * 10.0  # 10 px per inch for display
+            s = target_px / current
+            adj = (pts - mid) * s + mid
+            return adj
+        else:
+            pts = _to3d(frame_arr)
+            if pts is None or max(7, 12) >= pts.shape[0]:
+                return None
+            # Use LeftArm (7) to RightArm (12)
+            l_sh, r_sh = pts[7], pts[12]
+            mid = (l_sh + r_sh) / 2.0
+            current = np.linalg.norm(r_sh - l_sh)
+            if current <= 1e-9:
+                return None
+            target_m = inches_to_meters(shoulder_width_in)
+            s = target_m / current
+            adj = (pts - mid) * s + mid
+            return adj
+
     def animate_frame(t):
         # Clear all axes
-        ax_pose.clear()
+        ax_pose_orig.clear()
+        ax_pose_adj.clear()
         ax_l_flex.clear()
         ax_r_flex.clear()
         ax_l_abd.clear()
         ax_r_abd.clear()
         
-        # Plot pose
+        # Plot pose: original and adjusted
         if mode == "3d":
             joints = pose_seq[t]
-            if joints.ndim == 2 and joints.shape[1] >= 3:
-                x, y, z = joints[:, 0], joints[:, 1], joints[:, 2]
-                ax_pose.scatter(x, y, z, c='red', s=25, alpha=0.9)
-                for s, e in connections:
-                    if s < len(joints) and e < len(joints):
-                        ax_pose.plot([x[s], x[e]], [y[s], y[e]], [z[s], z[e]], 'b-', lw=1.5)
-                ax_pose.set_title(f"3D Pose Frame {t}")
-                # Set reasonable limits
-                ax_pose.set_xlim([x.min()-0.1, x.max()+0.1])
-                ax_pose.set_ylim([y.min()-0.1, y.max()+0.1])
-                ax_pose.set_zlim([z.min()-0.1, z.max()+0.1])
+            pts3 = _to3d(joints)
+            if pts3 is not None:
+                x, y, z = pts3[:, 0], pts3[:, 1], pts3[:, 2]
+                ax_pose_orig.scatter(x, y, z, c='#d62728', s=25, alpha=0.9)  # red vertices
+                for sidx, eidx in connections:
+                    if sidx < len(pts3) and eidx < len(pts3):
+                        ax_pose_orig.plot([x[sidx], x[eidx]], [y[sidx], y[eidx]], [z[sidx], z[eidx]], color='#1f77b4', lw=1.5)  # blue edges
+                ax_pose_orig.set_title(f"Original 3D (t={t})")
+
+                shoulder_width_in = cfg.get("anthropometrics", {}).get("shoulder_width_in", 15.0)
+                adj3 = adjust_pose_by_shoulder_width(pts3, "3d", shoulder_width_in)
+                if adj3 is not None:
+                    xa, ya, za = adj3[:, 0], adj3[:, 1], adj3[:, 2]
+                    ax_pose_adj.scatter(xa, ya, za, c='#2ca02c', s=30, alpha=0.9)  # green vertices
+                    for sidx, eidx in connections:
+                        if sidx < len(adj3) and eidx < len(adj3):
+                            ax_pose_adj.plot([xa[sidx], xa[eidx]], [ya[sidx], ya[eidx]], [za[sidx], za[eidx]], color='#17becf', lw=1.5)  # cyan edges
+                    ax_pose_adj.set_title("Adjusted 3D (shoulder width)")
+                    # Use shared axis limits for easy comparison
+                    x_min = min(x.min(), xa.min()); x_max = max(x.max(), xa.max())
+                    y_min = min(y.min(), ya.min()); y_max = max(y.max(), ya.max())
+                    z_min = min(z.min(), za.min()); z_max = max(z.max(), za.max())
+                    pad = 0.1
+                    ax_pose_orig.set_xlim([x_min - pad, x_max + pad])
+                    ax_pose_orig.set_ylim([y_min - pad, y_max + pad])
+                    ax_pose_orig.set_zlim([z_min - pad, z_max + pad])
+                    ax_pose_adj.set_xlim([x_min - pad, x_max + pad])
+                    ax_pose_adj.set_ylim([y_min - pad, y_max + pad])
+                    ax_pose_adj.set_zlim([z_min - pad, z_max + pad])
+                else:
+                    # Only original available; apply limits to both for consistency
+                    pad = 0.1
+                    ax_pose_orig.set_xlim([x.min()-pad, x.max()+pad])
+                    ax_pose_orig.set_ylim([y.min()-pad, y.max()+pad])
+                    ax_pose_orig.set_zlim([z.min()-pad, z.max()+pad])
+                    ax_pose_adj.set_xlim([x.min()-pad, x.max()+pad])
+                    ax_pose_adj.set_ylim([y.min()-pad, y.max()+pad])
+                    ax_pose_adj.set_zlim([z.min()-pad, z.max()+pad])
             else:
-                ax_pose.text(0.5, 0.5, f"Frame {t}\n(3D data unavailable)", 
-                           ha='center', va='center', transform=ax_pose.transAxes)
+                ax_pose_orig.text(0.5, 0.5, f"Frame {t}\n(3D data unavailable)", 
+                           ha='center', va='center', transform=ax_pose_orig.transAxes)
         else:  # 2d
             joints = pose_seq[t]
-            if joints.ndim == 2 and joints.shape[1] >= 2:
-                x, y = joints[:, 0], joints[:, 1]
-                ax_pose.scatter(x, y, c='red', s=30)
-                for s, e in connections:
-                    if s < len(joints) and e < len(joints):
-                        ax_pose.plot([x[s], x[e]], [y[s], y[e]], 'b-')
-                ax_pose.set_title(f"2D Pose Frame {t}")
-                ax_pose.set_xlim([x.min()-50, x.max()+50])
-                ax_pose.set_ylim([y.max()+50, y.min()-50])  # Flip Y for image coords
+            pts2 = _to2d(joints)
+            if pts2 is not None:
+                x, y = pts2[:, 0], pts2[:, 1]
+                ax_pose_orig.scatter(x, y, c='#d62728', s=30)  # red vertices
+                for sidx, eidx in connections:
+                    if sidx < len(pts2) and eidx < len(pts2):
+                        ax_pose_orig.plot([x[sidx], x[eidx]], [y[sidx], y[eidx]], color='#1f77b4')  # blue edges
+                ax_pose_orig.set_title(f"Original 2D (t={t})")
+
+                shoulder_width_in = cfg.get("anthropometrics", {}).get("shoulder_width_in", 15.0)
+                adj2 = adjust_pose_by_shoulder_width(pts2, "2d", shoulder_width_in)
+                if adj2 is not None:
+                    xa, ya = adj2[:, 0], adj2[:, 1]
+                    ax_pose_adj.scatter(xa, ya, c='#2ca02c', s=30)  # green vertices
+                    for sidx, eidx in connections:
+                        if sidx < len(adj2) and eidx < len(adj2):
+                            ax_pose_adj.plot([xa[sidx], xa[eidx]], [ya[sidx], ya[eidx]], color='#17becf')  # cyan edges
+                    ax_pose_adj.set_title("Adjusted 2D (shoulder width)")
+                    # Shared axis limits for comparison (note Y flipped for image coords)
+                    x_min = min(x.min(), xa.min()); x_max = max(x.max(), xa.max())
+                    y_min = min(y.min(), ya.min()); y_max = max(y.max(), ya.max())
+                    pad = 50
+                    ax_pose_orig.set_xlim([x_min - pad, x_max + pad])
+                    ax_pose_adj.set_xlim([x_min - pad, x_max + pad])
+                    ax_pose_orig.set_ylim([y_max + pad, y_min - pad])
+                    ax_pose_adj.set_ylim([y_max + pad, y_min - pad])
+                else:
+                    # Only original available; apply same limits to both
+                    pad = 50
+                    ax_pose_orig.set_xlim([x.min()-pad, x.max()+pad])
+                    ax_pose_adj.set_xlim([x.min()-pad, x.max()+pad])
+                    ax_pose_orig.set_ylim([y.max()+pad, y.min()-pad])
+                    ax_pose_adj.set_ylim([y.max()+pad, y.min()-pad])
             else:
-                ax_pose.text(0.5, 0.5, f"Frame {t}\n(2D data unavailable)", 
-                           ha='center', va='center', transform=ax_pose.transAxes)
+                ax_pose_orig.text(0.5, 0.5, f"Frame {t}\n(2D data unavailable)", 
+                           ha='center', va='center', transform=ax_pose_orig.transAxes)
         
-        # Plot DOF bars
+        # Plot DOF bars (bottom row: four small panels)
         current_dofs = dofs[t]
-        
-        # L/R Flexion
-        ax_l_flex.bar(['L_Flex'], [current_dofs[0]], color='blue', alpha=0.7)
+        ax_l_flex.bar(['L_Flex'], [current_dofs[0]], color='#1f77b4', alpha=0.85)
         ax_l_flex.set_ylim(0, 1)
-        ax_l_flex.set_title(f'L Flex: {current_dofs[0]:.3f}')
-        ax_l_flex.set_ylabel('DOF Value')
-        
-        ax_r_flex.bar(['R_Flex'], [current_dofs[1]], color='red', alpha=0.7)
+        ax_l_flex.set_title(f'L Flex {current_dofs[0]:.2f}')
+        ax_l_flex.set_ylabel('DOF')
+
+        ax_r_flex.bar(['R_Flex'], [current_dofs[1]], color='#d62728', alpha=0.85)
         ax_r_flex.set_ylim(0, 1)
-        ax_r_flex.set_title(f'R Flex: {current_dofs[1]:.3f}')
-        ax_r_flex.set_ylabel('DOF Value')
-        
-        # L/R Abduction
-        ax_l_abd.bar(['L_Abd'], [current_dofs[2]], color='blue', alpha=0.7)
+        ax_r_flex.set_title(f'R Flex {current_dofs[1]:.2f}')
+
+        ax_l_abd.bar(['L_Abd'], [current_dofs[2]], color='#1f77b4', alpha=0.85)
         ax_l_abd.set_ylim(0, 1)
-        ax_l_abd.set_title(f'L Abd: {current_dofs[2]:.3f}')
-        ax_l_abd.set_ylabel('DOF Value')
-        
-        ax_r_abd.bar(['R_Abd'], [current_dofs[3]], color='red', alpha=0.7)
+        ax_l_abd.set_title(f'L Abd {current_dofs[2]:.2f}')
+        ax_l_abd.set_ylabel('DOF')
+
+        ax_r_abd.bar(['R_Abd'], [current_dofs[3]], color='#d62728', alpha=0.85)
         ax_r_abd.set_ylim(0, 1)
-        ax_r_abd.set_title(f'R Abd: {current_dofs[3]:.3f}')
-        ax_r_abd.set_ylabel('DOF Value')
+        ax_r_abd.set_title(f'R Abd {current_dofs[3]:.2f}')
         
-        # Highlight current frame in time series
-        ax_time.axvline(x=t, color='black', linestyle='--', alpha=0.5)
+        # (No time series panel in this layout)
         
         plt.tight_layout()
     

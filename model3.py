@@ -331,9 +331,9 @@ def map_shoulders_to_dofs_2d_sequence(
                 if t > 0:
                     dofs[t] = dofs[t - 1]
                 continue
-            # Pixel shoulder width estimate per frame
-            if pts2.shape[0] > max(6, 11):
-                sh_w_px = float(np.linalg.norm(pts2[11] - pts2[6]))
+            # Pixel shoulder span estimate per frame (LeftArm 7 to RightArm 12)
+            if pts2.shape[0] > max(7, 12):
+                sh_w_px = float(np.linalg.norm(pts2[12] - pts2[7]))
             else:
                 sh_w_px = 1.0
             if sh_w_px <= 1e-6:
