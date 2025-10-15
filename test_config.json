@@ -1,0 +1,63 @@
+{
+  "inputs": {
+    "use_shoulder_mapper": true
+  },
+  "anthropometrics": {
+    "shoulder_width_in": 19,
+    "comment": "Measure your shoulder width in inches (across the top of shoulders)"
+  },
+  "joints": {
+    "l_sh_idx": 6,
+    "l_el_idx": 8,
+    "r_sh_idx": 11,
+    "r_el_idx": 13,
+    "comment": "Joint indices from your pose data (usually don't need to change)"
+  },
+  "rom_deg": {
+    "shoulder_flexion": {
+      "L": {
+        "min": 0,
+        "max": 140,
+        "neutral": 5,
+        "comment": "Left arm forward/up movement (0=down, 140=max forward/up)"
+      },
+      "R": {
+        "min": 0,
+        "max": 100,
+        "neutral": 0,
+        "comment": "Right arm forward/up movement"
+      }
+    },
+    "shoulder_abduction": {
+      "L": {
+        "min": 0,
+        "max": 130,
+        "neutral": 3,
+        "comment": "Left arm out-to-side movement (0=down, 130=max out-to-side)"
+      },
+      "R": {
+        "min": 0,
+        "max": 100,
+        "neutral": 0,
+        "comment": "Right arm out-to-side movement"
+      }
+    }
+  },
+  "smoothing": {
+    "alpha": 0.7,
+    "comment": "Smoothing strength (0.1=very smooth, 0.9=very responsive)"
+  },
+  "debug": {
+    "print_torso": true,
+    "print_angles": true,
+    "print_dof_demo": true,
+    "comment": "Debug output settings"
+  },
+  "instructions": {
+    "step1": "Measure your shoulder width in inches and update 'shoulder_width_in'",
+    "step2": "Set your ROM limits - the min/max angles you can achieve for each movement",
+    "step3": "Set neutral positions - your comfortable baseline (usually 0-5 degrees)",
+    "step4": "Run: python test_shoulder_mapper.py to test your settings",
+    "step5": "Adjust values if DOF ranges don't look right (should be 0-1 range)"
+  }
+}
