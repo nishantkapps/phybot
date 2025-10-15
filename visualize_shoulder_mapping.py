@@ -101,9 +101,9 @@ def visualize_shoulder_mapping(mode="3d", example="Ex1", idx=0, config_file="tes
     num_frames = min(len(dofs), pose_seq.shape[0])
     
     fig = plt.figure(figsize=(22, 10))
-    from matplotlib.gridspec import GridSpec
+    from matplotlib.gridspec import GridSpec, GridSpecFromSubplotSpec
     # 2 rows x 6 cols: top has three equal panels (each spans 2 cols); bottom has 4 mini charts (first 4 cols)
-    gs = GridSpec(2, 6, figure=fig, height_ratios=[2.0, 1.0], wspace=0.25, hspace=0.35)
+    gs = GridSpec(2, 6, figure=fig, height_ratios=[2.0, 1.0], wspace=0.25, hspace=0.60)
 
     # Top row (full width split into two halves): original and adjusted poses
     if mode == "3d":
@@ -115,11 +115,21 @@ def visualize_shoulder_mapping(mode="3d", example="Ex1", idx=0, config_file="tes
         ax_pose_adj = fig.add_subplot(gs[0, 2:4])
         ax_robot = fig.add_subplot(gs[0, 4:6])
 
-    # Bottom row: four compact charts for robot angles (theta0..theta3)
-    ax_th0 = fig.add_subplot(gs[1, 0])
-    ax_th1 = fig.add_subplot(gs[1, 1])
-    ax_th2 = fig.add_subplot(gs[1, 2])
-    ax_th3 = fig.add_subplot(gs[1, 3])
+    # Bottom row: create a sub-gridspec spanning full width with 4 equal columns
+    bottom = GridSpecFromSubplotSpec(1, 4, subplot_spec=gs[1, 0:6], wspace=0.35)
+    ax_th0 = fig.add_subplot(bottom[0, 0])
+    ax_th1 = fig.add_subplot(bottom[0, 1])
+    ax_th2 = fig.add_subplot(bottom[0, 2])
+    ax_th3 = fig.add_subplot(bottom[0, 3])
+
+    # Draw a thin labeled separator just above the bottom row
+    try:
+        # Place separator further above the bottom row (~1–2 cm visual gap depending on DPI)
+        y_sep = ax_th0.get_position().y1 + 0.05
+        fig.add_artist(plt.Line2D([0.05, 0.95], [y_sep, y_sep], transform=fig.transFigure, color='0.5', linewidth=1))
+        fig.text(0.5, y_sep + 0.01, "Robot Angles (deg)", ha='center', va='bottom', fontsize=10, color='0.5', transform=fig.transFigure)
+    except Exception:
+        pass
     
     # (Time series removed for compact 2x4 layout)
     
@@ -316,24 +326,36 @@ def visualize_shoulder_mapping(mode="3d", example="Ex1", idx=0, config_file="tes
             ax_th0.axhline(0, color='k', linewidth=1)
             ax_th0.set_ylim(-90, 90)
             ax_th0.set_xticks([])
-            ax_th0.set_title(f'θ0 rot {th0:.0f}°')
+            ax_th0.set_yticks(range(-90, 91, 30))
+            ax_th0.grid(True, axis='y', alpha=0.2)
+            ax_th0.text(0, th0, f"{th0:.0f}°", ha='center', va='bottom' if th0>=0 else 'top', fontsize=9, color='#4d4d4d')
+            ax_th0.set_title(f'θ0 rot')
             ax_th0.set_ylabel('deg')
             # theta1 [0, 120]
             ax_th1.bar([0], [th1], color='#8c564b', alpha=0.85)
             ax_th1.set_ylim(0, 120)
             ax_th1.set_xticks([])
-            ax_th1.set_title(f'θ1 elev {th1:.0f}°')
+            ax_th1.set_yticks(range(0, 121, 30))
+            ax_th1.grid(True, axis='y', alpha=0.2)
+            ax_th1.text(0, th1, f"{th1:.0f}°", ha='center', va='bottom', fontsize=9, color='#4d4d4d')
+            ax_th1.set_title(f'θ1 elev')
             # theta2 [0, 135]
             ax_th2.bar([0], [th2], color='#e377c2', alpha=0.85)
             ax_th2.set_ylim(0, 135)
             ax_th2.set_xticks([])
-            ax_th2.set_title(f'θ2 elbow {th2:.0f}°')
+            ax_th2.set_yticks(range(0, 136, 45))
+            ax_th2.grid(True, axis='y', alpha=0.2)
+            ax_th2.text(0, th2, f"{th2:.0f}°", ha='center', va='bottom', fontsize=9, color='#4d4d4d')
+            ax_th2.set_title(f'θ2 elbow')
             # theta3 [-90, 90]
             ax_th3.bar([0], [th3], color='#7f7f7f', alpha=0.85)
             ax_th3.axhline(0, color='k', linewidth=1)
             ax_th3.set_ylim(-90, 90)
             ax_th3.set_xticks([])
-            ax_th3.set_title(f'θ3 pitch {th3:.0f}°')
+            ax_th3.set_yticks(range(-90, 91, 30))
+            ax_th3.grid(True, axis='y', alpha=0.2)
+            ax_th3.text(0, th3, f"{th3:.0f}°", ha='center', va='bottom' if th3>=0 else 'top', fontsize=9, color='#4d4d4d')
+            ax_th3.set_title(f'θ3 pitch')
         else:
             for ax, name in zip([ax_th0, ax_th1, ax_th2, ax_th3], ['θ0', 'θ1', 'θ2', 'θ3']):
                 ax.text(0.5, 0.5, f'{name}\nN/A (2D)', ha='center', va='center', transform=ax.transAxes)
