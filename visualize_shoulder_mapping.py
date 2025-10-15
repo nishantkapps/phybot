@@ -13,8 +13,10 @@ from model3 import (
     map_shoulders_to_dofs_2d_sequence,
     load_pose_sequence,
     get_joint_connections,
-    inches_to_meters
+    inches_to_meters,
+    compute_right_arm_robot_angles_3d_sequence,
 )
+from visualize_robot_arm import forward_kinematics_points
 
 def visualize_shoulder_mapping(mode="3d", example="Ex1", idx=0, config_file="test_config.json", 
                               max_frames=50, fps=10, autoplay=True, save_gif=False):
@@ -83,28 +85,41 @@ def visualize_shoulder_mapping(mode="3d", example="Ex1", idx=0, config_file="tes
         )
     
     print(f"✅ Generated {dofs.shape[0]} DOF frames")
+
+    # Compute right-arm robot joint angles (deg) if 3D
+    robot_angles = None
+    if mode == "3d":
+        robot_angles = compute_right_arm_robot_angles_3d_sequence(
+            pose_seq,
+            shoulder_idx=joints.get("r_sh_idx", 11),
+            elbow_idx=joints.get("r_el_idx", 13),
+            wrist_idx=14,
+        )
     
     # Create visualization
     connections = get_joint_connections()
     num_frames = min(len(dofs), pose_seq.shape[0])
     
-    fig = plt.figure(figsize=(18, 10))
+    fig = plt.figure(figsize=(22, 10))
     from matplotlib.gridspec import GridSpec
-    gs = GridSpec(2, 4, figure=fig, height_ratios=[2.0, 1.0], wspace=0.25, hspace=0.35)
+    # 2 rows x 6 cols: top has three equal panels (each spans 2 cols); bottom has 4 mini charts (first 4 cols)
+    gs = GridSpec(2, 6, figure=fig, height_ratios=[2.0, 1.0], wspace=0.25, hspace=0.35)
 
     # Top row (full width split into two halves): original and adjusted poses
     if mode == "3d":
         ax_pose_orig = fig.add_subplot(gs[0, 0:2], projection='3d')
         ax_pose_adj = fig.add_subplot(gs[0, 2:4], projection='3d')
+        ax_robot = fig.add_subplot(gs[0, 4:6], projection='3d')
     else:
         ax_pose_orig = fig.add_subplot(gs[0, 0:2])
         ax_pose_adj = fig.add_subplot(gs[0, 2:4])
+        ax_robot = fig.add_subplot(gs[0, 4:6])
 
-    # Bottom row: four compact charts (L_Flex, R_Flex, L_Abd, R_Abd)
-    ax_l_flex = fig.add_subplot(gs[1, 0])
-    ax_r_flex = fig.add_subplot(gs[1, 1])
-    ax_l_abd = fig.add_subplot(gs[1, 2])
-    ax_r_abd = fig.add_subplot(gs[1, 3])
+    # Bottom row: four compact charts for robot angles (theta0..theta3)
+    ax_th0 = fig.add_subplot(gs[1, 0])
+    ax_th1 = fig.add_subplot(gs[1, 1])
+    ax_th2 = fig.add_subplot(gs[1, 2])
+    ax_th3 = fig.add_subplot(gs[1, 3])
     
     # (Time series removed for compact 2x4 layout)
     
@@ -168,10 +183,11 @@ def visualize_shoulder_mapping(mode="3d", example="Ex1", idx=0, config_file="tes
         # Clear all axes
         ax_pose_orig.clear()
         ax_pose_adj.clear()
-        ax_l_flex.clear()
-        ax_r_flex.clear()
-        ax_l_abd.clear()
-        ax_r_abd.clear()
+        ax_robot.clear()
+        ax_th0.clear()
+        ax_th1.clear()
+        ax_th2.clear()
+        ax_th3.clear()
         
         # Plot pose: original and adjusted
         if mode == "3d":
@@ -256,25 +272,72 @@ def visualize_shoulder_mapping(mode="3d", example="Ex1", idx=0, config_file="tes
                 ax_pose_orig.text(0.5, 0.5, f"Frame {t}\n(2D data unavailable)", 
                            ha='center', va='center', transform=ax_pose_orig.transAxes)
         
-        # Plot DOF bars (bottom row: four small panels)
-        current_dofs = dofs[t]
-        ax_l_flex.bar(['L_Flex'], [current_dofs[0]], color='#1f77b4', alpha=0.85)
-        ax_l_flex.set_ylim(0, 1)
-        ax_l_flex.set_title(f'L Flex {current_dofs[0]:.2f}')
-        ax_l_flex.set_ylabel('DOF')
+        # Draw robot pose (only meaningful in 3D mode)
+        if robot_angles is not None:
+            th0, th1, th2, th3 = robot_angles[min(t, robot_angles.shape[0]-1)]
+            # Link lengths (mm) optionally from config
+            links = cfg.get("robot_links_mm", {})
+            L1_mm = float(links.get("L1_mm", 321.0))
+            L2_mm = float(links.get("L2_mm", 306.0))
+            Lw_mm = float(links.get("Lw_mm", 100.0))
+            P0, P1, P2, P3 = forward_kinematics_points(th0, th1, th2, th3, L1=L1_mm/1000.0, L2=L2_mm/1000.0, Lw=Lw_mm/1000.0)
+            X = [P0[0], P1[0], P2[0], P3[0]]
+            Y = [P0[1], P1[1], P2[1], P3[1]]
+            Z = [P0[2], P1[2], P2[2], P3[2]]
+            ax_robot.plot(X[:2], Y[:2], Z[:2], '-o', color='#1f77b4', linewidth=3)
+            ax_robot.plot(X[1:3], Y[1:3], Z[1:3], '-o', color='#ff7f0e', linewidth=3)
+            ax_robot.plot(X[2:4], Y[2:4], Z[2:4], '-o', color='#2ca02c', linewidth=3)
+            ax_robot.set_title(f"Robot (θ0={th0:.0f}°, θ1={th1:.0f}°, θ2={th2:.0f}°, θ3={th3:.0f}°)")
+            ax_robot.set_xlabel('X')
+            ax_robot.set_ylabel('Y')
+            ax_robot.set_zlabel('Z')
+            ax_robot.set_box_aspect((1, 1, 1))
+            # Synchronize robot axes with original pose panel for side-by-side comparability
+            try:
+                lx, ux = ax_pose_orig.get_xlim()
+                ly, uy = ax_pose_orig.get_ylim()
+                lz, uz = ax_pose_orig.get_zlim()
+                ax_robot.set_xlim(lx, ux)
+                ax_robot.set_ylim(ly, uy)
+                ax_robot.set_zlim(lz, uz)
+            except Exception:
+                # Fallback to default limits
+                lim = 0.8
+                ax_robot.set_xlim(-lim, lim)
+                ax_robot.set_ylim(-lim, lim)
+                ax_robot.set_zlim(-0.1, 1.0)
+            ax_robot.view_init(elev=20, azim=-60)
 
-        ax_r_flex.bar(['R_Flex'], [current_dofs[1]], color='#d62728', alpha=0.85)
-        ax_r_flex.set_ylim(0, 1)
-        ax_r_flex.set_title(f'R Flex {current_dofs[1]:.2f}')
-
-        ax_l_abd.bar(['L_Abd'], [current_dofs[2]], color='#1f77b4', alpha=0.85)
-        ax_l_abd.set_ylim(0, 1)
-        ax_l_abd.set_title(f'L Abd {current_dofs[2]:.2f}')
-        ax_l_abd.set_ylabel('DOF')
-
-        ax_r_abd.bar(['R_Abd'], [current_dofs[3]], color='#d62728', alpha=0.85)
-        ax_r_abd.set_ylim(0, 1)
-        ax_r_abd.set_title(f'R Abd {current_dofs[3]:.2f}')
+        # Plot robot joint angles (deg). If 2D, show N/A.
+        if robot_angles is not None:
+            th0, th1, th2, th3 = robot_angles[min(t, robot_angles.shape[0]-1)]
+            # theta0 [-90, 90]
+            ax_th0.bar([0], [th0], color='#9467bd', alpha=0.85)
+            ax_th0.axhline(0, color='k', linewidth=1)
+            ax_th0.set_ylim(-90, 90)
+            ax_th0.set_xticks([])
+            ax_th0.set_title(f'θ0 rot {th0:.0f}°')
+            ax_th0.set_ylabel('deg')
+            # theta1 [0, 120]
+            ax_th1.bar([0], [th1], color='#8c564b', alpha=0.85)
+            ax_th1.set_ylim(0, 120)
+            ax_th1.set_xticks([])
+            ax_th1.set_title(f'θ1 elev {th1:.0f}°')
+            # theta2 [0, 135]
+            ax_th2.bar([0], [th2], color='#e377c2', alpha=0.85)
+            ax_th2.set_ylim(0, 135)
+            ax_th2.set_xticks([])
+            ax_th2.set_title(f'θ2 elbow {th2:.0f}°')
+            # theta3 [-90, 90]
+            ax_th3.bar([0], [th3], color='#7f7f7f', alpha=0.85)
+            ax_th3.axhline(0, color='k', linewidth=1)
+            ax_th3.set_ylim(-90, 90)
+            ax_th3.set_xticks([])
+            ax_th3.set_title(f'θ3 pitch {th3:.0f}°')
+        else:
+            for ax, name in zip([ax_th0, ax_th1, ax_th2, ax_th3], ['θ0', 'θ1', 'θ2', 'θ3']):
+                ax.text(0.5, 0.5, f'{name}\nN/A (2D)', ha='center', va='center', transform=ax.transAxes)
+                ax.set_xticks([]); ax.set_yticks([])
         
         # (No time series panel in this layout)
         

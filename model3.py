@@ -173,6 +173,122 @@ def compute_shoulder_angles_3d(
     return flexion, abduction
 
 # ============================================================
+# 🤝 Robot Joint Angles (Right Arm, 3D) — degrees
+# Summary: Compute [theta0, theta1, theta2, theta3] for right arm.
+# - theta0: shoulder horizontal rotation (about torso up)   [-90, +90]
+# - theta1: shoulder elevation (0=arm down)                 [0, 120]
+# - theta2: elbow flex/extend (0=straight)                  [0, 135]
+# - theta3: wrist/end-effector pitch (sagittal)             [-90, +90]
+# Notes:
+# - Angles are clamped to typical safe mechanical limits.
+# - Uses indices: Right shoulder=11, RightForeArm=13 (elbow proxy), RightHand=14 (wrist proxy).
+# ============================================================
+def compute_right_arm_robot_angles_3d(
+    pts: np.ndarray,
+    torso_right: np.ndarray,
+    torso_up: np.ndarray,
+    torso_forward: np.ndarray,
+    shoulder_idx: int = 11,
+    elbow_idx: int = 13,
+    wrist_idx: int = 14,
+) -> Tuple[float, float, float, float]:
+    # Fetch joints (robust slicing already done upstream for pts)
+    if max(shoulder_idx, elbow_idx, wrist_idx) >= pts.shape[0]:
+        raise IndexError("Right arm joint indices exceed array shape")
+
+    shoulder = pts[shoulder_idx]
+    elbow = pts[elbow_idx]
+    wrist = pts[wrist_idx] if wrist_idx < pts.shape[0] else elbow + (elbow - shoulder)
+
+    # Vectors
+    humerus = elbow - shoulder  # shoulder -> elbow
+    forearm = wrist - elbow     # elbow -> wrist
+    if np.linalg.norm(humerus) < 1e-9 or np.linalg.norm(forearm) < 1e-9:
+        return 0.0, 0.0, 0.0, 0.0
+
+    h_n = normalize_vector(humerus)
+    f_n = normalize_vector(forearm)
+
+    # theta0: horizontal rotation (azimuth around up) — signed angle vs forward in horizontal plane
+    h_horiz = h_n - np.dot(h_n, torso_up) * torso_up
+    if np.linalg.norm(h_horiz) < 1e-9:
+        theta0 = 0.0
+    else:
+        theta0 = np.degrees(
+            _signed_angle_in_plane(h_horiz, torso_forward, torso_up)
+        )
+    theta0 = float(np.clip(theta0, -90.0, 90.0))
+
+    # theta1: elevation (0=arm down along -up, ~90=horizontal, up to 120)
+    # Compute angle between humerus and -up
+    cos_elev = float(np.clip(np.dot(h_n, -torso_up), -1.0, 1.0))
+    theta1 = float(np.degrees(np.arccos(cos_elev)))
+    theta1 = float(np.clip(theta1, 0.0, 120.0))
+
+    # theta2: elbow flexion (0=straight). Angle between -humerus (elbow->shoulder) and forearm (elbow->wrist)
+    cos_elbow = float(np.clip(np.dot(normalize_vector(-humerus), f_n), -1.0, 1.0))
+    theta2 = float(np.degrees(np.arccos(cos_elbow)))
+    theta2 = float(np.clip(theta2, 0.0, 135.0))
+
+    # theta3: wrist/end-effector pitch in sagittal plane (up-forward), signed by right axis
+    f_sag = f_n - np.dot(f_n, torso_right) * torso_right
+    if np.linalg.norm(f_sag) < 1e-9:
+        theta3 = 0.0
+    else:
+        theta3 = np.degrees(
+            _signed_angle_in_plane(f_sag, torso_forward, torso_right)
+        )
+    theta3 = float(np.clip(theta3, -90.0, 90.0))
+
+    return theta0, theta1, theta2, theta3
+
+def compute_right_arm_robot_angles_3d_sequence(
+    pose_seq: np.ndarray,
+    shoulder_idx: int = 11,
+    elbow_idx: int = 13,
+    wrist_idx: int = 14,
+) -> np.ndarray:
+    """Return [frames, 4] of right-arm robot angles (deg): [theta0, theta1, theta2, theta3]."""
+    if pose_seq.ndim < 2:
+        raise ValueError("pose_seq must be at least [frames, ...]")
+
+    def _to_pts(arr: np.ndarray) -> np.ndarray:
+        if arr.ndim == 2:
+            if arr.shape[1] >= 3:
+                return arr[:, :3]
+            if arr.shape[0] >= 3:
+                return arr[:3, :].T
+            flat = arr.ravel()
+        else:
+            flat = arr.ravel()
+        if flat.size % 3 == 0:
+            return flat.reshape(-1, 3)
+        if flat.size % 4 == 0:
+            return flat.reshape(-1, 4)[:, :3]
+        raise ValueError("cannot coerce frame to [N,3]")
+
+    num_frames = pose_seq.shape[0]
+    out = np.zeros((num_frames, 4), dtype=float)
+    for t in range(num_frames):
+        try:
+            pts = _to_pts(pose_seq[t])
+            # Torso frame from pelvis(0), neck(3), hips(16,21)
+            if pts.shape[0] <= 21:
+                if t > 0:
+                    out[t] = out[t-1]
+                continue
+            origin, right, up, fwd = build_torso_frame_3d(pts[0], pts[3], pts[16], pts[21])
+            theta0, theta1, theta2, theta3 = compute_right_arm_robot_angles_3d(
+                pts, right, up, fwd, shoulder_idx=shoulder_idx, elbow_idx=elbow_idx, wrist_idx=wrist_idx
+            )
+            out[t] = [theta0, theta1, theta2, theta3]
+        except Exception:
+            if t > 0:
+                out[t] = out[t-1]
+            continue
+    return out
+
+# ============================================================
 # 🎛️ Shoulder DOF Mapper (3D sequence)
 # Summary: Map each 3D frame to L/R flexion & abduction DOFs, normalized & smoothed.
 # ============================================================
@@ -725,6 +841,11 @@ def main():
         help="Demo per-user DOF normalization and smoothing for shoulders",
     )
     parser.add_argument(
+        "--export_robot_angles",
+        action="store_true",
+        help="Print sample right-arm robot joint angles (deg) on first 3D frame",
+    )
+    parser.add_argument(
         "--use_shoulder_mapper",
         action="store_true",
         help="Use 3D shoulder mapper as robot inputs (overrides default mapping)",
@@ -863,6 +984,24 @@ def main():
                     )
                 else:
                     print("[warn] debug_angles skipped: joint indices exceed array shape", pts.shape)
+
+            if args.export_robot_angles:
+                # Compute right-arm robot angles (deg) from first frame
+                try:
+                    pts = _to_pts(sample)
+                    if pts.shape[0] > max(21, 14):
+                        _, right, up, fwd = build_torso_frame_3d(pts[0], pts[3], pts[16], pts[21])
+                        th0, th1, th2, th3 = compute_right_arm_robot_angles_3d(
+                            pts, right, up, fwd, shoulder_idx=args.r_sh_idx, elbow_idx=args.r_el_idx, wrist_idx=14
+                        )
+                        print(
+                            "Right-arm robot angles (deg):",
+                            f"theta0={th0:.1f}, theta1={th1:.1f}, theta2={th2:.1f}, theta3={th3:.1f}"
+                        )
+                    else:
+                        print("[warn] export_robot_angles skipped: insufficient joints")
+                except Exception as e:
+                    print("[warn] export_robot_angles failed:", e)
 
             if debug_demo_user_dof:
                 # Simple demonstration of per-user normalization and smoothing
