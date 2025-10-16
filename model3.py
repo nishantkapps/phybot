@@ -104,6 +104,457 @@ def inches_to_meters(x: float) -> float:
     """Convert inches to meters."""
     return float(x) * 0.0254
 
+def meters_to_inches(x: float) -> float:
+    """Convert meters to inches."""
+    return float(x) / 0.0254
+
+
+# ============================================================
+# 📐 Anthropometric Measurements & Scaling
+# Summary: Load and validate comprehensive body measurements for personalized pose transposition.
+# ============================================================
+class AnthropometricProfile:
+    """Comprehensive anthropometric profile for personalized pose scaling."""
+    
+    def __init__(self, config: dict):
+        """Initialize with measurements from config file."""
+        anthro = config.get("anthropometrics", {})
+        
+        # Core measurements
+        self.height_in = float(anthro.get("height_in", 70.0))
+        self.shoulder_width_in = float(anthro.get("shoulder_width_in", 19.0))
+        self.waist_circumference_in = float(anthro.get("waist_circumference_in", 32.0))
+        self.chest_circumference_in = float(anthro.get("chest_circumference_in", 38.0))
+        self.hip_width_in = float(anthro.get("hip_width_in", 15.0))
+        self.head_circumference_in = float(anthro.get("head_circumference_in", 22.0))
+        self.torso_length_in = float(anthro.get("torso_length_in", 20.0))
+        
+        # Bilateral measurements
+        self.left_leg_length_in = float(anthro.get("left_leg_length_in", 40.0))
+        self.right_leg_length_in = float(anthro.get("right_leg_length_in", 40.0))
+        self.left_arm_length_in = float(anthro.get("left_arm_length_in", 24.0))
+        self.right_arm_length_in = float(anthro.get("right_arm_length_in", 24.0))
+        self.left_hand_length_in = float(anthro.get("left_hand_length_in", 7.0))
+        self.right_hand_length_in = float(anthro.get("right_hand_length_in", 7.0))
+        self.left_foot_length_in = float(anthro.get("left_foot_length_in", 10.0))
+        self.right_foot_length_in = float(anthro.get("right_foot_length_in", 10.0))
+        
+        # Convert to meters for calculations
+        self._convert_to_meters()
+        
+        # Validate measurements
+        self._validate_measurements()
+    
+    def _convert_to_meters(self):
+        """Convert all measurements to meters for internal calculations."""
+        self.height_m = inches_to_meters(self.height_in)
+        self.shoulder_width_m = inches_to_meters(self.shoulder_width_in)
+        self.waist_circumference_m = inches_to_meters(self.waist_circumference_in)
+        self.chest_circumference_m = inches_to_meters(self.chest_circumference_in)
+        self.hip_width_m = inches_to_meters(self.hip_width_in)
+        self.head_circumference_m = inches_to_meters(self.head_circumference_in)
+        self.torso_length_m = inches_to_meters(self.torso_length_in)
+        
+        self.left_leg_length_m = inches_to_meters(self.left_leg_length_in)
+        self.right_leg_length_m = inches_to_meters(self.right_leg_length_in)
+        self.left_arm_length_m = inches_to_meters(self.left_arm_length_in)
+        self.right_arm_length_m = inches_to_meters(self.right_arm_length_in)
+        self.left_hand_length_m = inches_to_meters(self.left_hand_length_in)
+        self.right_hand_length_m = inches_to_meters(self.right_hand_length_in)
+        self.left_foot_length_m = inches_to_meters(self.left_foot_length_in)
+        self.right_foot_length_m = inches_to_meters(self.right_foot_length_in)
+    
+    def _validate_measurements(self):
+        """Validate measurement ranges and bilateral differences."""
+        # Check for reasonable ranges
+        if not (48.0 <= self.height_in <= 84.0):  # 4' to 7' range
+            print(f"[warn] Height {self.height_in} inches seems unusual")
+        
+        if not (12.0 <= self.shoulder_width_in <= 28.0):
+            print(f"[warn] Shoulder width {self.shoulder_width_in} inches seems unusual")
+        
+        # Check bilateral differences (warn if >10% difference)
+        leg_diff = abs(self.left_leg_length_in - self.right_leg_length_in) / max(self.left_leg_length_in, self.right_leg_length_in)
+        if leg_diff > 0.1:
+            print(f"[warn] Significant leg length difference: {leg_diff:.1%}")
+        
+        arm_diff = abs(self.left_arm_length_in - self.right_arm_length_in) / max(self.left_arm_length_in, self.right_arm_length_in)
+        if arm_diff > 0.1:
+            print(f"[warn] Significant arm length difference: {arm_diff:.1%}")
+    
+    def get_limb_scaling_factors(self) -> dict:
+        """Return scaling factors for different body parts."""
+        # Use average adult proportions as reference
+        ref_height = 70.0  # inches
+        ref_shoulder_width = 19.0
+        ref_arm_length = 24.0
+        ref_leg_length = 40.0
+        
+        return {
+            "overall": self.height_in / ref_height,
+            "shoulder_width": self.shoulder_width_in / ref_shoulder_width,
+            "left_arm": self.left_arm_length_in / ref_arm_length,
+            "right_arm": self.right_arm_length_in / ref_arm_length,
+            "left_leg": self.left_leg_length_in / ref_leg_length,
+            "right_leg": self.right_leg_length_in / ref_leg_length,
+            "torso": self.torso_length_in / 20.0,  # reference torso length
+        }
+    
+    def get_limb_lengths_meters(self) -> dict:
+        """Return all limb lengths in meters for calculations."""
+        return {
+            "left_arm": self.left_arm_length_m,
+            "right_arm": self.right_arm_length_m,
+            "left_leg": self.left_leg_length_m,
+            "right_leg": self.right_leg_length_m,
+            "left_hand": self.left_hand_length_m,
+            "right_hand": self.right_hand_length_m,
+            "left_foot": self.left_foot_length_m,
+            "right_foot": self.right_foot_length_m,
+        }
+    
+    def print_profile(self):
+        """Print comprehensive anthropometric profile."""
+        print("\n📏 Anthropometric Profile:")
+        print(f"  Height: {self.height_in:.1f}\" ({self.height_m:.2f}m)")
+        print(f"  Shoulder Width: {self.shoulder_width_in:.1f}\" ({self.shoulder_width_m:.2f}m)")
+        print(f"  Torso Length: {self.torso_length_in:.1f}\" ({self.torso_length_m:.2f}m)")
+        print(f"  Left Arm: {self.left_arm_length_in:.1f}\" ({self.left_arm_length_m:.2f}m)")
+        print(f"  Right Arm: {self.right_arm_length_in:.1f}\" ({self.right_arm_length_m:.2f}m)")
+        print(f"  Left Leg: {self.left_leg_length_in:.1f}\" ({self.left_leg_length_m:.2f}m)")
+        print(f"  Right Leg: {self.right_leg_length_in:.1f}\" ({self.right_leg_length_m:.2f}m)")
+        
+        # Show scaling factors
+        factors = self.get_limb_scaling_factors()
+        print(f"\n🔧 Scaling Factors:")
+        print(f"  Overall: {factors['overall']:.2f}x")
+        print(f"  Shoulder: {factors['shoulder_width']:.2f}x")
+        print(f"  Left Arm: {factors['left_arm']:.2f}x")
+        print(f"  Right Arm: {factors['right_arm']:.2f}x")
+        print(f"  Left Leg: {factors['left_leg']:.2f}x")
+        print(f"  Right Leg: {factors['right_leg']:.2f}x")
+
+
+def load_anthropometric_profile(config: dict) -> AnthropometricProfile:
+    """Load and validate anthropometric profile from config."""
+    return AnthropometricProfile(config)
+
+
+# ============================================================
+# 🔎 Source Sequence Auto-Selection
+# Summary: Choose the source subject whose inferred limb proportions
+#          best match the user's anthropometrics (arms/legs prioritized).
+# ============================================================
+def _safe_to_3d(arr: np.ndarray) -> np.ndarray | None:
+    try:
+        if arr.ndim == 2 and arr.shape[1] >= 3:
+            return arr[:, :3]
+        if arr.ndim == 2 and arr.shape[0] >= 3:
+            return arr[:3, :].T
+        flat = arr.ravel()
+        if flat.size % 3 == 0:
+            return flat.reshape(-1, 3)
+        if flat.size % 4 == 0:
+            return flat.reshape(-1, 4)[:, :3]
+    except Exception:
+        pass
+    return None
+
+
+def _safe_to_2d(arr: np.ndarray) -> np.ndarray | None:
+    try:
+        if arr.ndim == 2 and arr.shape[1] >= 2:
+            return arr[:, :2]
+        if arr.ndim == 2 and arr.shape[0] >= 2:
+            return arr[:2, :].T
+        flat = arr.ravel()
+        if flat.size % 2 == 0:
+            return flat.reshape(-1, 2)
+        if flat.size % 3 == 0:
+            return flat.reshape(-1, 3)[:, :2]
+    except Exception:
+        pass
+    return None
+
+
+def _infer_limb_lengths_inches_from_frame(frame: np.ndarray, mode: str, shoulder_width_in_hint: float) -> dict | None:
+    """Infer limb lengths from a single frame.
+
+    Returns dict with keys: left_arm_in, right_arm_in, left_leg_in, right_leg_in, shoulder_width_in.
+    Uses joint indices per joints_names.txt.
+    """
+    if mode == "3d":
+        pts = _safe_to_3d(frame)
+        if pts is None or pts.shape[0] <= 25:
+            return None
+        # Distances in meters → inches
+        def dist(a, b):
+            return meters_to_inches(float(np.linalg.norm(pts[a] - pts[b])))
+        # Arm: shoulder->elbow + elbow->wrist
+        l_arm = dist(6, 8) + dist(8, 9)
+        r_arm = dist(11, 13) + dist(13, 14)
+        # Leg: hip->knee + knee->ankle (approx using 16->18 via 17; and 21->23 via 22)
+        l_leg = dist(16, 17) + dist(17, 18)
+        r_leg = dist(21, 22) + dist(22, 23)
+        # Shoulder width: LeftArm(7) to RightArm(12)
+        sh_w = dist(7, 12)
+        return {
+            "left_arm_in": l_arm,
+            "right_arm_in": r_arm,
+            "left_leg_in": l_leg,
+            "right_leg_in": r_leg,
+            "shoulder_width_in": sh_w,
+        }
+    else:
+        pts = _safe_to_2d(frame)
+        if pts is None or pts.shape[0] <= 25:
+            return None
+        # Estimate pixels-per-inch via shoulder span
+        sh_px = float(np.linalg.norm(pts[12] - pts[7])) if pts.shape[0] > 12 else 0.0
+        if sh_px <= 1e-6:
+            return None
+        px_per_in = sh_px / max(1e-6, shoulder_width_in_hint)
+        def dist_px_to_in(a, b):
+            d_px = float(np.linalg.norm(pts[a] - pts[b]))
+            return d_px / px_per_in
+        l_arm = dist_px_to_in(6, 8) + dist_px_to_in(8, 9)
+        r_arm = dist_px_to_in(11, 13) + dist_px_to_in(13, 14)
+        l_leg = dist_px_to_in(16, 17) + dist_px_to_in(17, 18)
+        r_leg = dist_px_to_in(21, 22) + dist_px_to_in(22, 23)
+        sh_w = sh_px / px_per_in
+        return {
+            "left_arm_in": l_arm,
+            "right_arm_in": r_arm,
+            "left_leg_in": l_leg,
+            "right_leg_in": r_leg,
+            "shoulder_width_in": sh_w,
+        }
+
+
+def _aggregate_inferred_over_sequence(seq: np.ndarray, mode: str, shoulder_width_in_hint: float, max_samples: int = 50) -> dict | None:
+    n = seq.shape[0]
+    idxs = np.linspace(0, n - 1, num=min(max_samples, n), dtype=int)
+    vals = {k: [] for k in ["left_arm_in", "right_arm_in", "left_leg_in", "right_leg_in", "shoulder_width_in"]}
+    for t in idxs:
+        est = _infer_limb_lengths_inches_from_frame(seq[t], mode, shoulder_width_in_hint)
+        if est is None:
+            continue
+        for k, v in est.items():
+            if np.isfinite(v) and v > 0:
+                vals[k].append(v)
+    if not any(len(v) for v in vals.values()):
+        return None
+    agg = {k: float(np.median(v)) if len(v) else float("nan") for k, v in vals.items()}
+    return agg
+
+
+def _distance_to_profile(inferred: dict, profile: AnthropometricProfile) -> float:
+    # Weights: prioritize arms/legs
+    w = {
+        "left_arm_in": 3.0,
+        "right_arm_in": 3.0,
+        "left_leg_in": 3.0,
+        "right_leg_in": 3.0,
+        "shoulder_width_in": 1.0,
+    }
+    target = {
+        "left_arm_in": profile.left_arm_length_in,
+        "right_arm_in": profile.right_arm_length_in,
+        "left_leg_in": profile.left_leg_length_in,
+        "right_leg_in": profile.right_leg_length_in,
+        "shoulder_width_in": profile.shoulder_width_in,
+    }
+    dist = 0.0
+    for k, weight in w.items():
+        iv = inferred.get(k, float("nan"))
+        tv = target[k]
+        if not np.isfinite(iv) or iv <= 0:
+            continue
+        # Use relative error to be scale-invariant
+        rel = abs(iv - tv) / max(1e-6, tv)
+        dist += weight * rel
+    return float(dist)
+
+
+def select_best_source_index(
+    data_dir: str,
+    example: str,
+    mode: str,
+    profile: AnthropometricProfile,
+    max_candidates: int | None = None,
+):
+    """Return (best_index, filenames, distances) for the example directory.
+
+    Scans all sequences under 2d_joints/ExX or 3d_joints/ExX, infers limb lengths,
+    and picks the closest to the user's profile.
+    """
+    path = os.path.join(
+        data_dir,
+        "2d_joints" if mode == "2d" else "3d_joints",
+        example,
+    )
+    vframes, ffiles = load_video_frames(path)
+    if len(vframes) == 0:
+        raise FileNotFoundError(f"No data found for {path}")
+    total = len(vframes)
+    consider = min(total, max_candidates) if max_candidates else total
+    dists = []
+    inferred_list = []
+    for i in range(consider):
+        seq = vframes[i]
+        inferred = _aggregate_inferred_over_sequence(seq, mode, profile.shoulder_width_in)
+        inferred_list.append(inferred)
+        if inferred is None:
+            dists.append(float("inf"))
+        else:
+            d = _distance_to_profile(inferred, profile)
+            dists.append(d)
+    best_idx = int(np.argmin(dists))
+    return best_idx, ffiles, dists, inferred_list
+
+
+def scale_pose_sequence(pose_seq: np.ndarray, anthropometric_profile: AnthropometricProfile, 
+                       mode: str = "3d") -> np.ndarray:
+    """Scale pose sequence using anthropometric measurements for personalized transposition."""
+    if pose_seq.ndim < 2:
+        raise ValueError("pose_seq must be at least [frames, ...]")
+    
+    # Get scaling factors
+    factors = anthropometric_profile.get_limb_scaling_factors()
+    limb_lengths = anthropometric_profile.get_limb_lengths_meters()
+    
+    # Create scaled pose sequence
+    scaled_pose = pose_seq.copy()
+    
+    def _to_pts(arr: np.ndarray) -> np.ndarray:
+        """Convert frame to [num_joints, 3] format."""
+        if arr.ndim == 2:
+            if arr.shape[1] >= 3:
+                return arr[:, :3]
+            if arr.shape[0] >= 3:
+                return arr[:3, :].T
+            flat = arr.ravel()
+        else:
+            flat = arr.ravel()
+        if flat.size % 3 == 0:
+            return flat.reshape(-1, 3)
+        if flat.size % 4 == 0:
+            return flat.reshape(-1, 4)[:, :3]
+        raise ValueError("cannot coerce frame to [N,3]")
+    
+    def _to_2d(arr: np.ndarray) -> np.ndarray:
+        """Convert frame to [num_joints, 2] format."""
+        if arr.ndim == 2:
+            if arr.shape[1] >= 2:
+                return arr[:, :2]
+            if arr.shape[0] >= 2:
+                return arr[:2, :].T
+            flat = arr.ravel()
+        else:
+            flat = arr.ravel()
+        if flat.size % 2 == 0:
+            return flat.reshape(-1, 2)
+        if flat.size % 3 == 0:
+            return flat.reshape(-1, 3)[:, :2]
+        raise ValueError("cannot coerce frame to [N,2]")
+    
+    for t in range(pose_seq.shape[0]):
+        try:
+            if mode == "3d":
+                pts = _to_pts(pose_seq[t])
+                if pts.shape[0] < 26:  # Need at least 26 joints
+                    continue
+                
+                # Scale different body parts with appropriate factors
+                # Torso joints (0-5): overall scaling
+                torso_joints = [0, 1, 2, 3, 4, 5]  # Hips, Spine, Spine1, Neck, Head, Head_end
+                for joint_idx in torso_joints:
+                    if joint_idx < pts.shape[0]:
+                        pts[joint_idx] *= factors["overall"]
+                
+                # Left arm joints (6-10): left arm scaling
+                left_arm_joints = [6, 7, 8, 9, 10]  # LeftShoulder, LeftArm, LeftForeArm, LeftHand, LeftHand_end
+                for joint_idx in left_arm_joints:
+                    if joint_idx < pts.shape[0]:
+                        pts[joint_idx] *= factors["left_arm"]
+                
+                # Right arm joints (11-15): right arm scaling
+                right_arm_joints = [11, 12, 13, 14, 15]  # RightShoulder, RightArm, RightForeArm, RightHand, RightHand_end
+                for joint_idx in right_arm_joints:
+                    if joint_idx < pts.shape[0]:
+                        pts[joint_idx] *= factors["right_arm"]
+                
+                # Left leg joints (16-20): left leg scaling
+                left_leg_joints = [16, 17, 18, 19, 20]  # LeftUpLeg, LeftLeg, LeftFoot, LeftToeBase, LeftToeBase_end
+                for joint_idx in left_leg_joints:
+                    if joint_idx < pts.shape[0]:
+                        pts[joint_idx] *= factors["left_leg"]
+                
+                # Right leg joints (21-25): right leg scaling
+                right_leg_joints = [21, 22, 23, 24, 25]  # RightUpLeg, RightLeg, RightFoot, RightToeBase, RightToeBase_end
+                for joint_idx in right_leg_joints:
+                    if joint_idx < pts.shape[0]:
+                        pts[joint_idx] *= factors["right_leg"]
+                
+                # Update the scaled pose
+                if scaled_pose[t].ndim == 2 and scaled_pose[t].shape[1] >= 3:
+                    scaled_pose[t][:, :3] = pts
+                else:
+                    # Handle different array shapes
+                    flat_pts = pts.ravel()
+                    if scaled_pose[t].size >= flat_pts.size:
+                        scaled_pose[t].flat[:flat_pts.size] = flat_pts
+                        
+            else:  # 2D mode
+                pts = _to_2d(pose_seq[t])
+                if pts.shape[0] < 26:
+                    continue
+                
+                # Apply similar scaling for 2D
+                # Torso joints
+                torso_joints = [0, 1, 2, 3, 4, 5]
+                for joint_idx in torso_joints:
+                    if joint_idx < pts.shape[0]:
+                        pts[joint_idx] *= factors["overall"]
+                
+                # Left arm joints
+                left_arm_joints = [6, 7, 8, 9, 10]
+                for joint_idx in left_arm_joints:
+                    if joint_idx < pts.shape[0]:
+                        pts[joint_idx] *= factors["left_arm"]
+                
+                # Right arm joints
+                right_arm_joints = [11, 12, 13, 14, 15]
+                for joint_idx in right_arm_joints:
+                    if joint_idx < pts.shape[0]:
+                        pts[joint_idx] *= factors["right_arm"]
+                
+                # Left leg joints
+                left_leg_joints = [16, 17, 18, 19, 20]
+                for joint_idx in left_leg_joints:
+                    if joint_idx < pts.shape[0]:
+                        pts[joint_idx] *= factors["left_leg"]
+                
+                # Right leg joints
+                right_leg_joints = [21, 22, 23, 24, 25]
+                for joint_idx in right_leg_joints:
+                    if joint_idx < pts.shape[0]:
+                        pts[joint_idx] *= factors["right_leg"]
+                
+                # Update the scaled pose
+                if scaled_pose[t].ndim == 2 and scaled_pose[t].shape[1] >= 2:
+                    scaled_pose[t][:, :2] = pts
+                else:
+                    flat_pts = pts.ravel()
+                    if scaled_pose[t].size >= flat_pts.size:
+                        scaled_pose[t].flat[:flat_pts.size] = flat_pts
+                        
+        except Exception as e:
+            # Skip problematic frames
+            continue
+    
+    return scaled_pose
+
 
 def _get_rom_side(rom_cfg: dict, key: str, side: str, default_min: float = 0.0, default_max: float = 150.0, default_neutral: float = 0.0) -> Tuple[float, float, float]:
     """Return (min,max,neutral) for a given ROM key and side, supporting two schema styles:
@@ -441,7 +892,7 @@ def map_shoulders_to_dofs_2d_sequence(
 
     shoulder_width_m = inches_to_meters(shoulder_width_in)
     for t in range(num_frames):
-        try:
+        try:       
             pts2 = _to_2d(pose_seq[t])
             if max(l_sh_idx, l_el_idx, r_sh_idx, r_el_idx) >= pts2.shape[0]:
                 if t > 0:
@@ -665,6 +1116,7 @@ def visualize_pose_and_robot(
     robot_history: Sequence[Tuple[int, np.ndarray, np.ndarray, np.ndarray]],
     mode: str = "2d",
     interval: int = 50,
+    anthropometric_profile: AnthropometricProfile = None,
 ):
     """Animate pose and robot DOF states in a two-panel matplotlib figure."""
     # Side-by-side plot: human pose on left, robot actuator states on right
@@ -676,12 +1128,19 @@ def visualize_pose_and_robot(
 
     # Create axes; use 3D projection for pose when requested
     if mode == "3d":
-        fig = plt.figure(figsize=(10, 5))
+        fig = plt.figure(figsize=(12, 6))
         ax_pose = fig.add_subplot(1, 2, 1, projection='3d')
         ax_robot = fig.add_subplot(1, 2, 2)
     else:
-        fig, axes = plt.subplots(1, 2, figsize=(10, 5))
+        fig, axes = plt.subplots(1, 2, figsize=(12, 6))
         ax_pose, ax_robot = axes
+    
+    # Add anthropometric scaling info if available
+    if anthropometric_profile is not None:
+        factors = anthropometric_profile.get_limb_scaling_factors()
+        scaling_info = f"Scaling: H:{factors['overall']:.2f}x, L-Arm:{factors['left_arm']:.2f}x, R-Arm:{factors['right_arm']:.2f}x"
+        fig.suptitle(f"Physiotherapy Robot Simulation - {scaling_info}", fontsize=10)
+    
     plt.ion()
 
     for t in range(0, num_frames, 2):
@@ -874,6 +1333,23 @@ def main():
         default=13,
         help="Index of Right elbow proxy (e.g., RightForeArm) in pose array",
     )
+    parser.add_argument(
+        "--use_anthropometric_scaling",
+        action="store_true",
+        default=True,
+        help="Apply anthropometric scaling for personalized pose transposition",
+    )
+    parser.add_argument(
+        "--auto_select_source",
+        action="store_true",
+        help="Auto-select the best source sequence by matching anthropometrics",
+    )
+    parser.add_argument(
+        "--max_source_candidates",
+        type=int,
+        default=None,
+        help="Limit number of candidate sequences to consider during auto-selection",
+    )
     args = parser.parse_args()
 
     print("\n=== Physiotherapy Robot Simulation using Real Pose Data ===")
@@ -904,11 +1380,15 @@ def main():
     args.r_el_idx = int(joints_cfg.get("r_el_idx", args.r_el_idx))
     # ROM and smoothing for demo path (supports per-side or shared configs)
     rom_cfg = cfg.get("rom_deg", {})
-    # Simple, relatable measurements (e.g., inches) under anthropometrics
-    anthro = cfg.get("anthropometrics", {})
-    shoulder_width_in = float(anthro.get("shoulder_width_in", 15.0))
-    shoulder_width_m = inches_to_meters(shoulder_width_in)
+    # Load comprehensive anthropometric profile
+    anthropometric_profile = load_anthropometric_profile(cfg)
+    shoulder_width_in = anthropometric_profile.shoulder_width_in
+    shoulder_width_m = anthropometric_profile.shoulder_width_m
     smoothing_alpha = float(cfg.get("smoothing", {}).get("alpha", 0.3))
+    
+    # Print anthropometric profile for verification
+    if debug_print_torso:
+        anthropometric_profile.print_profile()
 
     # Per-side ROM and neutrals
     l_fx_min, l_fx_max, l_fx_neu = _get_rom_side(rom_cfg, "shoulder_flexion", "L")
@@ -923,7 +1403,33 @@ def main():
     debug_print_angles = bool(dbg_cfg.get("print_angles", True)) or args.debug_angles
     debug_demo_user_dof = bool(dbg_cfg.get("print_dof_demo", True)) or args.demo_user_dof
 
+    # If requested, auto-select the best matching source sequence (per exercise)
+    if args.auto_select_source:
+        try:
+            best_idx, ffiles, dists, inferred_list = select_best_source_index(
+                args.data_dir, args.example, args.mode, anthropometric_profile, max_candidates=args.max_source_candidates
+            )
+            print("\n🔎 Auto-selected source sequence:")
+            print(f"  Example: {args.example}")
+            print(f"  Candidates: {len(ffiles)} | Considered: {len(dists)}")
+            print(f"  Selected index: {best_idx} | File: {ffiles[best_idx] if best_idx < len(ffiles) else 'N/A'}")
+            print(f"  Distance: {dists[best_idx]:.3f}")
+            inf = inferred_list[best_idx]
+            if inf is not None:
+                print("  Inferred (in):", {k: round(v, 2) for k, v in inf.items() if np.isfinite(v)})
+            args.idx = best_idx
+        except Exception as e:
+            print(f"[warn] Auto-selection failed: {e}. Falling back to provided idx={args.idx}")
+
     pose_seq = load_pose_sequence(args.data_dir, args.idx, args.example, args.mode)
+    
+    # Apply anthropometric scaling for personalized transposition
+    if args.use_anthropometric_scaling and args.mode in ["2d", "3d"]:
+        print(f"🔧 Applying anthropometric scaling for personalized transposition...")
+        pose_seq = scale_pose_sequence(pose_seq, anthropometric_profile, args.mode)
+        print(f"✅ Pose sequence scaled using personal measurements")
+    elif not args.use_anthropometric_scaling:
+        print(f"⚠️  Anthropometric scaling disabled - using original pose data")
 
     # Optional: Build torso frame in 3D mode for downstream shoulder DOF mapping
     if args.mode == "3d":
@@ -1114,6 +1620,7 @@ def main():
         history,
         mode=args.mode,
         interval=args.interval_ms,
+        anthropometric_profile=anthropometric_profile,
     )
 
 

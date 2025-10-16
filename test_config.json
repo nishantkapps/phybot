@@ -3,8 +3,59 @@
     "use_shoulder_mapper": true
   },
   "anthropometrics": {
-    "shoulder_width_in": 19,
-    "comment": "Measure your shoulder width in inches (across the top of shoulders)"
+    "height_in": 70.0,
+    "height_comment": "Your total height in inches (measure from floor to top of head)",
+    
+    "shoulder_width_in": 19.0,
+    "shoulder_width_comment": "Shoulder width in inches (across the top of shoulders, shoulder to shoulder)",
+    
+    "waist_circumference_in": 32.0,
+    "waist_comment": "Waist circumference in inches (around the narrowest part of your torso)",
+    
+    "chest_circumference_in": 38.0,
+    "chest_comment": "Chest circumference in inches (around the fullest part of your chest)",
+    
+    "hip_width_in": 15.0,
+    "hip_comment": "Hip width in inches (across the widest part of your hips)",
+    
+    "head_circumference_in": 22.0,
+    "head_comment": "Head circumference in inches (around the widest part of your head)",
+    
+    "torso_length_in": 30.0,
+    "torso_comment": "Torso length in inches (from shoulder to waist, measured along the spine)",
+    
+    "left_leg_length_in": 40.0,
+    "left_leg_comment": "Left leg length in inches (from hip joint to ankle, measured along the side)",
+    
+    "right_leg_length_in": 40.0,
+    "right_leg_comment": "Right leg length in inches (from hip joint to ankle, measured along the side)",
+    
+    "left_arm_length_in": 24.0,
+    "left_arm_comment": "Left arm length in inches (from shoulder joint to wrist, arm extended)",
+    
+    "right_arm_length_in": 24.0,
+    "right_arm_comment": "Right arm length in inches (from shoulder joint to wrist, arm extended)",
+    
+    "left_hand_length_in": 7.0,
+    "left_hand_comment": "Left hand length in inches (from wrist to tip of middle finger)",
+    
+    "right_hand_length_in": 7.0,
+    "right_hand_comment": "Right hand length in inches (from wrist to tip of middle finger)",
+    
+    "left_foot_length_in": 10.0,
+    "left_foot_comment": "Left foot length in inches (from heel to tip of longest toe)",
+    
+    "right_foot_length_in": 10.0,
+    "right_foot_comment": "Right foot length in inches (from heel to tip of longest toe)",
+    
+    "measurement_notes": {
+      "units": "All measurements in inches",
+      "precision": "Measure to nearest 0.5 inch for best results",
+      "posture": "Stand straight, arms at sides, when taking measurements",
+      "assistant_help": "Have someone help measure for accuracy, especially height and shoulder width",
+      "critical_measurements": "Arm and leg lengths are most critical for accurate pose transposition",
+      "bilateral_differences": "Measure both sides - many people have slight differences between left and right"
+    }
   },
   "joints": {
     "l_sh_idx": 6,
@@ -54,10 +105,12 @@
     "comment": "Debug output settings"
   },
   "instructions": {
-    "step1": "Measure your shoulder width in inches and update 'shoulder_width_in'",
-    "step2": "Set your ROM limits - the min/max angles you can achieve for each movement",
-    "step3": "Set neutral positions - your comfortable baseline (usually 0-5 degrees)",
-    "step4": "Run: python test_shoulder_mapper.py to test your settings",
-    "step5": "Adjust values if DOF ranges don't look right (should be 0-1 range)"
+    "step1": "Measure your body dimensions - start with height, shoulder width, and arm/leg lengths (most critical)",
+    "step2": "Update all anthropometric measurements in the config file with your actual measurements",
+    "step3": "Set your ROM limits - the min/max angles you can achieve for each movement",
+    "step4": "Set neutral positions - your comfortable baseline (usually 0-5 degrees)",
+    "step5": "Run: python test_shoulder_mapper.py to test your settings",
+    "step6": "Adjust values if DOF ranges don't look right (should be 0-1 range)",
+    "measurement_priority": "Focus on arm and leg lengths first - these are most critical for accurate pose transposition"
   }
 }

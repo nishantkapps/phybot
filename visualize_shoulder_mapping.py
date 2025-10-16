@@ -15,20 +15,52 @@ from model3 import (
     get_joint_connections,
     inches_to_meters,
     compute_right_arm_robot_angles_3d_sequence,
+    load_anthropometric_profile,
+    scale_pose_sequence,
+    select_best_source_index,
 )
 from visualize_robot_arm import forward_kinematics_points
 
 def visualize_shoulder_mapping(mode="3d", example="Ex1", idx=0, config_file="test_config.json", 
-                              max_frames=50, fps=10, autoplay=True, save_gif=False):
+                              max_frames=50, fps=10, autoplay=True, save_gif=False,
+                              auto_select_source=False, max_source_candidates=None):
     """Visualize shoulder mapping with pose + DOF charts."""
     
     # Load config
     with open(config_file, "r") as f:
         cfg = json.load(f)
     
-    # Load pose data
-    pose_seq = load_pose_sequence(".", idx, example, mode, max_frames=max_frames)
-    print(f"📊 Loaded {pose_seq.shape[0]} frames")
+    # Load comprehensive anthropometric profile
+    anthropometric_profile = load_anthropometric_profile(cfg)
+    print("📏 Anthropometric Profile Loaded:")
+    anthropometric_profile.print_profile()
+    
+    # Optionally auto-select best source subject by anthropometric similarity
+    if auto_select_source:
+        try:
+            best_idx, ffiles, dists, inferred_list = select_best_source_index(
+                ".", example, mode, anthropometric_profile, max_candidates=max_source_candidates
+            )
+            print("\n🔎 Auto-selected source sequence for visualization:")
+            print(f"  Example: {example}")
+            print(f"  Candidates: {len(ffiles)} | Considered: {len(dists)}")
+            print(f"  Selected index: {best_idx} | File: {ffiles[best_idx] if best_idx < len(ffiles) else 'N/A'}")
+            print(f"  Distance: {dists[best_idx]:.3f}")
+            inf = inferred_list[best_idx]
+            if inf is not None:
+                print("  Inferred (in):", {k: round(v, 2) for k, v in inf.items() if np.isfinite(v)})
+            idx = best_idx
+        except Exception as e:
+            print(f"[warn] Auto-selection failed in visualizer: {e}. Using provided idx={idx}")
+
+    # Load pose data (with possibly updated idx)
+    pose_seq_raw = load_pose_sequence(".", idx, example, mode, max_frames=max_frames)
+    print(f"📊 Loaded {pose_seq_raw.shape[0]} frames")
+    
+    # Apply anthropometric scaling for personalized transposition (create adjusted copy)
+    print(f"🔧 Applying anthropometric scaling for personalized transposition...")
+    pose_seq_adj = scale_pose_sequence(pose_seq_raw, anthropometric_profile, mode)
+    print(f"✅ Pose sequence scaled using personal measurements")
     
     # Extract config
     joints = cfg.get("joints", {})
@@ -47,10 +79,10 @@ def visualize_shoulder_mapping(mode="3d", example="Ex1", idx=0, config_file="tes
     l_abd = get_rom_side(rom.get("shoulder_abduction", {}), "L")
     r_abd = get_rom_side(rom.get("shoulder_abduction", {}), "R")
     
-    # Generate DOF mapping
+    # Generate DOF mapping (from adjusted sequence)
     if mode == "3d":
         dofs = map_shoulders_to_dofs_3d_sequence(
-            pose_seq,
+            pose_seq_adj,
             l_sh_idx=joints.get("l_sh_idx", 6),
             l_el_idx=joints.get("l_el_idx", 8),
             r_sh_idx=joints.get("r_sh_idx", 11),
@@ -67,7 +99,7 @@ def visualize_shoulder_mapping(mode="3d", example="Ex1", idx=0, config_file="tes
         )
     else:  # 2d
         dofs = map_shoulders_to_dofs_2d_sequence(
-            pose_seq,
+            pose_seq_adj,
             l_sh_idx=joints.get("l_sh_idx", 6),
             l_el_idx=joints.get("l_el_idx", 8),
             r_sh_idx=joints.get("r_sh_idx", 11),
@@ -86,11 +118,11 @@ def visualize_shoulder_mapping(mode="3d", example="Ex1", idx=0, config_file="tes
     
     print(f"✅ Generated {dofs.shape[0]} DOF frames")
 
-    # Compute right-arm robot joint angles (deg) if 3D
+    # Compute right-arm robot joint angles (deg) if 3D (from adjusted sequence)
     robot_angles = None
     if mode == "3d":
         robot_angles = compute_right_arm_robot_angles_3d_sequence(
-            pose_seq,
+            pose_seq_adj,
             shoulder_idx=joints.get("r_sh_idx", 11),
             elbow_idx=joints.get("r_el_idx", 13),
             wrist_idx=14,
@@ -98,9 +130,14 @@ def visualize_shoulder_mapping(mode="3d", example="Ex1", idx=0, config_file="tes
     
     # Create visualization
     connections = get_joint_connections()
-    num_frames = min(len(dofs), pose_seq.shape[0])
+    num_frames = min(len(dofs), pose_seq_raw.shape[0], pose_seq_adj.shape[0])
+    
+    # Get scaling factors for display
+    factors = anthropometric_profile.get_limb_scaling_factors()
+    scaling_info = f"Scaling: H:{factors['overall']:.2f}x, L-Arm:{factors['left_arm']:.2f}x, R-Arm:{factors['right_arm']:.2f}x"
     
     fig = plt.figure(figsize=(22, 10))
+    fig.suptitle(f"Shoulder Mapping Visualization - {scaling_info}", fontsize=12)
     from matplotlib.gridspec import GridSpec, GridSpecFromSubplotSpec
     # 2 rows x 6 cols: top has three equal panels (each spans 2 cols); bottom has 4 mini charts (first 4 cols)
     gs = GridSpec(2, 6, figure=fig, height_ratios=[2.0, 1.0], wspace=0.25, hspace=0.60)
@@ -133,6 +170,85 @@ def visualize_shoulder_mapping(mode="3d", example="Ex1", idx=0, config_file="tes
     
     # (Time series removed for compact 2x4 layout)
     
+    # Precompute fixed axes limits across all frames to make size differences visible
+    fixed_limits = None
+    try:
+        if mode == "3d":
+            xs, ys, zs = [], [], []
+            sample_stride = max(1, num_frames // 100)
+            for t in range(0, num_frames, sample_stride):
+                # Use both raw and adjusted to span full range
+                for seq in (pose_seq_raw, pose_seq_adj):
+                    pts = None
+                    try:
+                        pts = seq[t]
+                    except Exception:
+                        continue
+                    pts3 = None
+                    try:
+                        if pts.ndim == 2 and pts.shape[1] >= 3:
+                            pts3 = pts[:, :3]
+                        elif pts.ndim == 2 and pts.shape[0] >= 3:
+                            pts3 = pts[:3, :].T
+                        else:
+                            flat = pts.ravel()
+                            if flat.size % 3 == 0:
+                                pts3 = flat.reshape(-1, 3)
+                            elif flat.size % 4 == 0:
+                                pts3 = flat.reshape(-1, 4)[:, :3]
+                    except Exception:
+                        pts3 = None
+                    if pts3 is None:
+                        continue
+                    xs.append(pts3[:,0])
+                    ys.append(pts3[:,1])
+                    zs.append(pts3[:,2])
+            if xs and ys and zs:
+                x_all = np.concatenate(xs); y_all = np.concatenate(ys); z_all = np.concatenate(zs)
+                pad = 0.1
+                fixed_limits = {
+                    "x": (float(x_all.min()-pad), float(x_all.max()+pad)),
+                    "y": (float(y_all.min()-pad), float(y_all.max()+pad)),
+                    "z": (float(z_all.min()-pad), float(z_all.max()+pad)),
+                }
+        else:
+            xs, ys = [], []
+            sample_stride = max(1, num_frames // 100)
+            for t in range(0, num_frames, sample_stride):
+                for seq in (pose_seq_raw, pose_seq_adj):
+                    pts = None
+                    try:
+                        pts = seq[t]
+                    except Exception:
+                        continue
+                    pts2 = None
+                    try:
+                        if pts.ndim == 2 and pts.shape[1] >= 2:
+                            pts2 = pts[:, :2]
+                        elif pts.ndim == 2 and pts.shape[0] >= 2:
+                            pts2 = pts[:2, :].T
+                        else:
+                            flat = pts.ravel()
+                            if flat.size % 2 == 0:
+                                pts2 = flat.reshape(-1, 2)
+                            elif flat.size % 3 == 0:
+                                pts2 = flat.reshape(-1, 3)[:, :2]
+                    except Exception:
+                        pts2 = None
+                    if pts2 is None:
+                        continue
+                    xs.append(pts2[:,0]); ys.append(pts2[:,1])
+            if xs and ys:
+                x_all = np.concatenate(xs); y_all = np.concatenate(ys)
+                pad = 50
+                fixed_limits = {
+                    "x": (float(x_all.min()-pad), float(x_all.max()+pad)),
+                    # For image coords, y is inverted in plotting section
+                    "y": (float(y_all.max()+pad), float(y_all.min()-pad)),
+                }
+    except Exception:
+        fixed_limits = None
+
     # Animation loop
     def _to2d(arr):
         if arr.ndim == 2 and arr.shape[1] >= 2:
@@ -158,36 +274,14 @@ def visualize_shoulder_mapping(mode="3d", example="Ex1", idx=0, config_file="tes
             return flat.reshape(-1, 4)[:, :3]
         return None
 
-    def adjust_pose_by_shoulder_width(frame_arr, mode, shoulder_width_in):
-        # Return adjusted joints array with scaling so shoulder width matches provided inches
+    def get_original_pose_for_comparison(frame_arr, mode):
+        """Get original pose data for comparison (before anthropometric scaling)."""
+        # This would need to be stored separately if we want to show original vs scaled
+        # For now, we'll just return the current frame as both original and scaled
         if mode == "2d":
-            pts = _to2d(frame_arr)
-            if pts is None or max(7, 12) >= pts.shape[0]:
-                return None
-            # Use LeftArm (7) to RightArm (12) span as user-requested shoulder span
-            l_sh, r_sh = pts[7], pts[12]
-            mid = (l_sh + r_sh) / 2.0
-            current = np.linalg.norm(r_sh - l_sh)
-            if current <= 1e-6:
-                return None
-            target_px = shoulder_width_in * 10.0  # 10 px per inch for display
-            s = target_px / current
-            adj = (pts - mid) * s + mid
-            return adj
+            return _to2d(frame_arr)
         else:
-            pts = _to3d(frame_arr)
-            if pts is None or max(7, 12) >= pts.shape[0]:
-                return None
-            # Use LeftArm (7) to RightArm (12)
-            l_sh, r_sh = pts[7], pts[12]
-            mid = (l_sh + r_sh) / 2.0
-            current = np.linalg.norm(r_sh - l_sh)
-            if current <= 1e-9:
-                return None
-            target_m = inches_to_meters(shoulder_width_in)
-            s = target_m / current
-            adj = (pts - mid) * s + mid
-            return adj
+            return _to3d(frame_arr)
 
     def animate_frame(t):
         # Clear all axes
@@ -199,28 +293,36 @@ def visualize_shoulder_mapping(mode="3d", example="Ex1", idx=0, config_file="tes
         ax_th2.clear()
         ax_th3.clear()
         
-        # Plot pose: original and adjusted
+        # Plot pose: left = ground truth (raw), right = adjusted (scaled)
         if mode == "3d":
-            joints = pose_seq[t]
-            pts3 = _to3d(joints)
-            if pts3 is not None:
-                x, y, z = pts3[:, 0], pts3[:, 1], pts3[:, 2]
+            pts3_raw = _to3d(pose_seq_raw[t])
+            pts3_adj = _to3d(pose_seq_adj[t])
+            if pts3_raw is not None and pts3_adj is not None:
+                # Ground truth (left)
+                x, y, z = pts3_raw[:, 0], pts3_raw[:, 1], pts3_raw[:, 2]
                 ax_pose_orig.scatter(x, y, z, c='#d62728', s=25, alpha=0.9)  # red vertices
                 for sidx, eidx in connections:
-                    if sidx < len(pts3) and eidx < len(pts3):
+                    if sidx < len(pts3_raw) and eidx < len(pts3_raw):
                         ax_pose_orig.plot([x[sidx], x[eidx]], [y[sidx], y[eidx]], [z[sidx], z[eidx]], color='#1f77b4', lw=1.5)  # blue edges
-                ax_pose_orig.set_title(f"Original 3D (t={t})")
+                ax_pose_orig.set_title(f"Ground Truth 3D (t={t})")
 
-                shoulder_width_in = cfg.get("anthropometrics", {}).get("shoulder_width_in", 15.0)
-                adj3 = adjust_pose_by_shoulder_width(pts3, "3d", shoulder_width_in)
-                if adj3 is not None:
-                    xa, ya, za = adj3[:, 0], adj3[:, 1], adj3[:, 2]
-                    ax_pose_adj.scatter(xa, ya, za, c='#2ca02c', s=30, alpha=0.9)  # green vertices
-                    for sidx, eidx in connections:
-                        if sidx < len(adj3) and eidx < len(adj3):
-                            ax_pose_adj.plot([xa[sidx], xa[eidx]], [ya[sidx], ya[eidx]], [za[sidx], za[eidx]], color='#17becf', lw=1.5)  # cyan edges
-                    ax_pose_adj.set_title("Adjusted 3D (shoulder width)")
-                    # Use shared axis limits for easy comparison
+                # Adjusted (right)
+                xa, ya, za = pts3_adj[:, 0], pts3_adj[:, 1], pts3_adj[:, 2]
+                ax_pose_adj.scatter(xa, ya, za, c='#2ca02c', s=30, alpha=0.9)  # green vertices
+                for sidx, eidx in connections:
+                    if sidx < len(pts3_adj) and eidx < len(pts3_adj):
+                        ax_pose_adj.plot([xa[sidx], xa[eidx]], [ya[sidx], ya[eidx]], [za[sidx], za[eidx]], color='#17becf', lw=1.5)  # cyan edges
+                ax_pose_adj.set_title("Adjusted 3D (personalized)")
+                
+                # Apply fixed limits if available; otherwise sync to combined extents
+                if fixed_limits and all(k in fixed_limits for k in ("x","y","z")):
+                    ax_pose_orig.set_xlim(*fixed_limits["x"])
+                    ax_pose_orig.set_ylim(*fixed_limits["y"])
+                    ax_pose_orig.set_zlim(*fixed_limits["z"])
+                    ax_pose_adj.set_xlim(*fixed_limits["x"])
+                    ax_pose_adj.set_ylim(*fixed_limits["y"])
+                    ax_pose_adj.set_zlim(*fixed_limits["z"])
+                else:
                     x_min = min(x.min(), xa.min()); x_max = max(x.max(), xa.max())
                     y_min = min(y.min(), ya.min()); y_max = max(y.max(), ya.max())
                     z_min = min(z.min(), za.min()); z_max = max(z.max(), za.max())
@@ -231,39 +333,36 @@ def visualize_shoulder_mapping(mode="3d", example="Ex1", idx=0, config_file="tes
                     ax_pose_adj.set_xlim([x_min - pad, x_max + pad])
                     ax_pose_adj.set_ylim([y_min - pad, y_max + pad])
                     ax_pose_adj.set_zlim([z_min - pad, z_max + pad])
-                else:
-                    # Only original available; apply limits to both for consistency
-                    pad = 0.1
-                    ax_pose_orig.set_xlim([x.min()-pad, x.max()+pad])
-                    ax_pose_orig.set_ylim([y.min()-pad, y.max()+pad])
-                    ax_pose_orig.set_zlim([z.min()-pad, z.max()+pad])
-                    ax_pose_adj.set_xlim([x.min()-pad, x.max()+pad])
-                    ax_pose_adj.set_ylim([y.min()-pad, y.max()+pad])
-                    ax_pose_adj.set_zlim([z.min()-pad, z.max()+pad])
             else:
                 ax_pose_orig.text(0.5, 0.5, f"Frame {t}\n(3D data unavailable)", 
                            ha='center', va='center', transform=ax_pose_orig.transAxes)
+                ax_pose_adj.text(0.5, 0.5, f"Frame {t}\n(3D data unavailable)", 
+                           ha='center', va='center', transform=ax_pose_adj.transAxes)
         else:  # 2d
-            joints = pose_seq[t]
-            pts2 = _to2d(joints)
-            if pts2 is not None:
-                x, y = pts2[:, 0], pts2[:, 1]
+            pts2_raw = _to2d(pose_seq_raw[t])
+            pts2_adj = _to2d(pose_seq_adj[t])
+            if pts2_raw is not None and pts2_adj is not None:
+                x, y = pts2_raw[:, 0], pts2_raw[:, 1]
                 ax_pose_orig.scatter(x, y, c='#d62728', s=30)  # red vertices
                 for sidx, eidx in connections:
-                    if sidx < len(pts2) and eidx < len(pts2):
+                    if sidx < len(pts2_raw) and eidx < len(pts2_raw):
                         ax_pose_orig.plot([x[sidx], x[eidx]], [y[sidx], y[eidx]], color='#1f77b4')  # blue edges
-                ax_pose_orig.set_title(f"Original 2D (t={t})")
+                ax_pose_orig.set_title(f"Ground Truth 2D (t={t})")
 
-                shoulder_width_in = cfg.get("anthropometrics", {}).get("shoulder_width_in", 15.0)
-                adj2 = adjust_pose_by_shoulder_width(pts2, "2d", shoulder_width_in)
-                if adj2 is not None:
-                    xa, ya = adj2[:, 0], adj2[:, 1]
-                    ax_pose_adj.scatter(xa, ya, c='#2ca02c', s=30)  # green vertices
-                    for sidx, eidx in connections:
-                        if sidx < len(adj2) and eidx < len(adj2):
-                            ax_pose_adj.plot([xa[sidx], xa[eidx]], [ya[sidx], ya[eidx]], color='#17becf')  # cyan edges
-                    ax_pose_adj.set_title("Adjusted 2D (shoulder width)")
-                    # Shared axis limits for comparison (note Y flipped for image coords)
+                xa, ya = pts2_adj[:, 0], pts2_adj[:, 1]
+                ax_pose_adj.scatter(xa, ya, c='#2ca02c', s=30)  # green vertices
+                for sidx, eidx in connections:
+                    if sidx < len(pts2_adj) and eidx < len(pts2_adj):
+                        ax_pose_adj.plot([xa[sidx], xa[eidx]], [ya[sidx], ya[eidx]], color='#17becf')  # cyan edges
+                ax_pose_adj.set_title("Adjusted 2D (personalized)")
+                
+                # Apply fixed limits if available; otherwise sync to combined extents (note Y flipped)
+                if fixed_limits and all(k in fixed_limits for k in ("x","y")):
+                    ax_pose_orig.set_xlim(*fixed_limits["x"])
+                    ax_pose_adj.set_xlim(*fixed_limits["x"])
+                    ax_pose_orig.set_ylim(*fixed_limits["y"])
+                    ax_pose_adj.set_ylim(*fixed_limits["y"])
+                else:
                     x_min = min(x.min(), xa.min()); x_max = max(x.max(), xa.max())
                     y_min = min(y.min(), ya.min()); y_max = max(y.max(), ya.max())
                     pad = 50
@@ -271,16 +370,11 @@ def visualize_shoulder_mapping(mode="3d", example="Ex1", idx=0, config_file="tes
                     ax_pose_adj.set_xlim([x_min - pad, x_max + pad])
                     ax_pose_orig.set_ylim([y_max + pad, y_min - pad])
                     ax_pose_adj.set_ylim([y_max + pad, y_min - pad])
-                else:
-                    # Only original available; apply same limits to both
-                    pad = 50
-                    ax_pose_orig.set_xlim([x.min()-pad, x.max()+pad])
-                    ax_pose_adj.set_xlim([x.min()-pad, x.max()+pad])
-                    ax_pose_orig.set_ylim([y.max()+pad, y.min()-pad])
-                    ax_pose_adj.set_ylim([y.max()+pad, y.min()-pad])
             else:
                 ax_pose_orig.text(0.5, 0.5, f"Frame {t}\n(2D data unavailable)", 
                            ha='center', va='center', transform=ax_pose_orig.transAxes)
+                ax_pose_adj.text(0.5, 0.5, f"Frame {t}\n(2D data unavailable)", 
+                           ha='center', va='center', transform=ax_pose_adj.transAxes)
         
         # Draw robot pose (only meaningful in 3D mode)
         if robot_angles is not None:
@@ -383,11 +477,21 @@ def visualize_shoulder_mapping(mode="3d", example="Ex1", idx=0, config_file="tes
         plt.show()
     
     # Print summary statistics
-    print(f"\n📊 DOF Summary:")
+    print(f"\n📊 DOF Summary (Anthropometrically Scaled):")
     print(f"  L Flex: {dofs[:, 0].min():.3f} - {dofs[:, 0].max():.3f} (mean: {dofs[:, 0].mean():.3f})")
     print(f"  R Flex: {dofs[:, 1].min():.3f} - {dofs[:, 1].max():.3f} (mean: {dofs[:, 1].mean():.3f})")
     print(f"  L Abd:  {dofs[:, 2].min():.3f} - {dofs[:, 2].max():.3f} (mean: {dofs[:, 2].mean():.3f})")
     print(f"  R Abd:  {dofs[:, 3].min():.3f} - {dofs[:, 3].max():.3f} (mean: {dofs[:, 3].mean():.3f})")
+    
+    # Print anthropometric scaling summary
+    print(f"\n🔧 Applied Anthropometric Scaling:")
+    factors = anthropometric_profile.get_limb_scaling_factors()
+    print(f"  Overall Height: {factors['overall']:.2f}x")
+    print(f"  Left Arm: {factors['left_arm']:.2f}x")
+    print(f"  Right Arm: {factors['right_arm']:.2f}x")
+    print(f"  Left Leg: {factors['left_leg']:.2f}x")
+    print(f"  Right Leg: {factors['right_leg']:.2f}x")
+    print(f"  Shoulder Width: {factors['shoulder_width']:.2f}x")
 
 def main():
     """Interactive visualizer."""
