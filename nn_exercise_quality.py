@@ -32,7 +32,9 @@ from DataLoader import load_video_frames
 
 
 def extract_features(pose_seq: np.ndarray) -> np.ndarray:
-    """Compute simple, robust features per sequence: mean and std of flattened joints over time.
+    """
+    Compute simple, robust features per sequence: 
+    mean and std of flattened joints over time.
     Returns a 1D feature vector.
     """
     # pose_seq: [frames, joints, dims]
@@ -44,8 +46,10 @@ def extract_features(pose_seq: np.ndarray) -> np.ndarray:
 
 
 def load_dataset_single_example(data_dir: str, mode: str, example: str, max_frames: int) -> Tuple[np.ndarray, List[str], List[str]]:
-    """Load ALL sequences for a single example folder.
-    Returns features matrix X, default labels (example repeated), and file identifiers (example/stem).
+    """
+    Load ALL sequences for a single example folder.
+    Returns features matrix X, default labels (example repeated), 
+    and file identifiers (example/stem).
     """
     X: List[np.ndarray] = []
     y: List[str] = []
@@ -261,7 +265,6 @@ def main():
 
     plt.tight_layout()
     plt.show()
-
 
 if __name__ == "__main__":
     main()
